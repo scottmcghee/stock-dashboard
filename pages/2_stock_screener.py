@@ -82,6 +82,10 @@ with st.form("screener_form"):
                 [None, "bullish", "bearish"],
                 format_func=lambda x: "Any" if x is None else x.title(),
             )
+            adr_min = st.number_input(
+                "ADR% Min", min_value=0, max_value=100, value=None, step=1,
+                help="Minimum average daily range as % of close (14-day)",
+            )
 
     submitted = st.form_submit_button("Search", type="primary")
 
@@ -141,6 +145,7 @@ ta_active = (
     or rsi_max is not None
     or macd_crossover is not None
     or ma_touch_period is not None
+    or adr_min is not None
 )
 ta_info: dict[str, dict] = {}
 
@@ -160,6 +165,7 @@ if ta_active:
                 rsi_max=float(rsi_max) if rsi_max is not None else None,
                 macd_crossover=macd_crossover,
                 ma_touch_period=ma_touch_period,
+                adr_min=float(adr_min) if adr_min is not None else None,
                 timeframe=ta_timeframe,
             )
             results = results[results["ticker"].isin(ta_info.keys())]
@@ -198,6 +204,11 @@ if ta_active and ta_info:
     if any(info.get("ma_touch") is not None for info in ta_info.values()):
         display_df["MA Touch"] = [
             str(ta_info.get(t, {}).get("ma_touch", "N/A"))
+            for t in tickers
+        ]
+    if any(info.get("adr") is not None for info in ta_info.values()):
+        display_df["ADR%"] = [
+            f"{ta_info.get(t, {}).get('adr', None):.1f}%" if ta_info.get(t, {}).get("adr") is not None else "N/A"
             for t in tickers
         ]
 

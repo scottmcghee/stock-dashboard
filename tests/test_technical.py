@@ -7,6 +7,7 @@ import pytest
 from logic.technical import (
     apply_ta_filters,
     check_price_touches_ma,
+    compute_adr,
     compute_macd,
     compute_rsi,
     compute_sma,
@@ -141,6 +142,30 @@ class TestCheckPriceTouchesMa:
         assert not check_price_touches_ma(ohlcv, period=50)
 
 
+class TestComputeAdr:
+    def test_basic_adr(self):
+        # Constant range of 2 on close of 100 → ADR = 2%
+        high = pd.Series([101.0] * 20)
+        low = pd.Series([99.0] * 20)
+        close = pd.Series([100.0] * 20)
+        adr = compute_adr(high, low, close, period=14)
+        assert adr == pytest.approx(2.0)
+
+    def test_varying_range(self):
+        high = pd.Series([105.0, 110.0, 103.0])
+        low = pd.Series([95.0, 90.0, 97.0])
+        close = pd.Series([100.0, 100.0, 100.0])
+        adr = compute_adr(high, low, close, period=3)
+        # ranges: 10%, 20%, 6% → mean = 12%
+        assert adr == pytest.approx(12.0)
+
+    def test_insufficient_data(self):
+        high = pd.Series([101.0, 102.0])
+        low = pd.Series([99.0, 98.0])
+        close = pd.Series([100.0, 100.0])
+        assert compute_adr(high, low, close, period=14) is None
+
+
 class TestApplyTaFilters:
     @pytest.fixture
     def bulk_ohlcv(self) -> pd.DataFrame:
@@ -180,3 +205,13 @@ class TestApplyTaFilters:
         )
         assert "UNKNOWN" not in result
         assert "AAPL" in result
+
+    def test_adr_filter(self, bulk_ohlcv):
+        # With high=close+1, low=close-1, range=2 on ~100 close → ADR ~2%
+        # Setting min to 1% should keep all, 50% should keep none
+        result_keep = apply_ta_filters(bulk_ohlcv, ["AAPL", "MSFT"], adr_min=1.0)
+        assert len(result_keep) == 2
+        assert all("adr" in v for v in result_keep.values())
+
+        result_none = apply_ta_filters(bulk_ohlcv, ["AAPL", "MSFT"], adr_min=50.0)
+        assert len(result_none) == 0

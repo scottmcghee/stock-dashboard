@@ -90,6 +90,21 @@ def check_price_touches_ma(
     return float(ohlcv["low"].iloc[-1]) <= sma_val <= float(ohlcv["high"].iloc[-1])
 
 
+def compute_adr(
+    high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14
+) -> float | None:
+    """Average Daily Range as a percentage of close over the last `period` bars.
+
+    ADR% = mean((high - low) / close * 100) over the period.
+    Returns None if insufficient data.
+    """
+    if len(close) < period:
+        return None
+    daily_range_pct = (high - low) / close * 100
+    val = daily_range_pct.iloc[-period:].mean()
+    return None if pd.isna(val) else float(val)
+
+
 def apply_ta_filters(
     ohlcv_df: pd.DataFrame,
     tickers: list[str],
@@ -97,6 +112,7 @@ def apply_ta_filters(
     rsi_max: float | None = None,
     macd_crossover: str | None = None,
     ma_touch_period: int | None = None,
+    adr_min: float | None = None,
     timeframe: str = "D",
 ) -> dict[str, dict]:
     """Apply TA filters to bulk OHLCV data, return passing tickers with indicator values.
@@ -107,10 +123,11 @@ def apply_ta_filters(
         rsi_min/rsi_max: RSI range filter (0-100).
         macd_crossover: 'bullish' or 'bearish' to require that crossover.
         ma_touch_period: SMA period for price-touch check.
+        adr_min: Minimum average daily range percentage (e.g. 2 = 2%).
         timeframe: 'D', 'W', or 'M' for resampling.
 
     Returns:
-        Dict of ticker -> {'rsi': float, 'macd_cross': str|None, 'ma_touch': bool}
+        Dict of ticker -> {'rsi': float, 'macd_cross': str|None, 'ma_touch': bool, 'adr': float}
         for tickers that pass all active filters.
     """
     no_filters = (
@@ -118,6 +135,7 @@ def apply_ta_filters(
         and rsi_max is None
         and macd_crossover is None
         and ma_touch_period is None
+        and adr_min is None
     )
     if no_filters:
         return {t: {} for t in tickers}
@@ -159,6 +177,12 @@ def apply_ta_filters(
                 continue
         else:
             info["ma_touch"] = None
+
+        # ADR filter
+        adr_val = compute_adr(ticker_data["high"], ticker_data["low"], close)
+        info["adr"] = adr_val
+        if adr_min is not None and (adr_val is None or adr_val < adr_min):
+            continue
 
         results[ticker] = info
 
