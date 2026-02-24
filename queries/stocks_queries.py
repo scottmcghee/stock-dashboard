@@ -154,6 +154,7 @@ def search_stocks_by_metrics(
     avg_volume_min: float | None = None,
     weinstein_stage: str | None = None,
     etf_ticker: str | None = None,
+    restrict_tickers: list[str] | None = None,
 ) -> pd.DataFrame:
     """Search stocks by various metrics criteria.
 
@@ -198,6 +199,11 @@ def search_stocks_by_metrics(
         WHERE m.date = %s
         """
         params: list = [latest_date]
+
+        if restrict_tickers is not None:
+            placeholders = ",".join(["%s"] * len(restrict_tickers))
+            query += f" AND m.ticker IN ({placeholders})"
+            params.extend(restrict_tickers)
 
         if etf_ticker:
             query += " AND m.etf_ticker = %s"
