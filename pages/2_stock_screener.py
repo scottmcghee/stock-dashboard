@@ -86,6 +86,26 @@ with st.form("screener_form"):
                 "ADR% Min", min_value=0, max_value=100, value=None, step=1,
                 help="Minimum average daily range as % of close (14-day)",
             )
+            gap_type = st.selectbox(
+                "Gap Detection",
+                [None, "bull", "bear", "any"],
+                format_func=lambda x: "None" if x is None else {"bull": "Bull Gap (up)", "bear": "Bear Gap (down)", "any": "Any Gap"}[x],
+                help="Detect recent price gaps within lookback window",
+            )
+            gap_min_pct = st.number_input(
+                "Gap Min %", min_value=0.0, max_value=20.0, value=1.0, step=0.5, format="%.1f",
+                help="Minimum gap size as % of previous close",
+            )
+            gap_lookback = st.number_input(
+                "Gap Lookback (bars)", min_value=1, max_value=20, value=5, step=1,
+                help="Number of bars to search for a gap",
+            )
+        pattern_scans = st.multiselect(
+            "Chart Patterns",
+            options=["high_tight_flag", "bull_flag", "bear_flag", "cup_and_handle", "v_bottom"],
+            format_func=lambda x: x.replace("_", " ").title(),
+            help="Only show stocks matching at least one selected pattern",
+        )
 
     submitted = st.form_submit_button("Search", type="primary")
 
@@ -146,6 +166,7 @@ ta_active = (
     or macd_crossover is not None
     or ma_touch_period is not None
     or adr_min is not None
+    or gap_type is not None
 )
 ta_info: dict[str, dict] = {}
 
@@ -166,6 +187,9 @@ if ta_active:
                 macd_crossover=macd_crossover,
                 ma_touch_period=ma_touch_period,
                 adr_min=float(adr_min) if adr_min is not None else None,
+                gap_type=gap_type,
+                gap_min_pct=float(gap_min_pct),
+                gap_lookback=int(gap_lookback),
                 timeframe=ta_timeframe,
             )
             results = results[results["ticker"].isin(ta_info.keys())]
@@ -173,6 +197,25 @@ if ta_active:
 if results.empty:
     st.warning("No stocks found after applying technical filters.")
     st.stop()
+
+# --- Phase 4: Pattern scanning (only on survivors) ---
+pattern_info: dict[str, list[dict]] = {}
+if pattern_scans:
+    with st.spinner("Scanning for chart patterns..."):
+        from queries.screener_queries import fetch_bulk_ohlcv_for_ta
+        from logic.patterns import scan_patterns
+
+        surviving_tickers = results["ticker"].unique().tolist()
+        if "ohlcv" not in dir() or ohlcv.empty:
+            ohlcv = fetch_bulk_ohlcv_for_ta(surviving_tickers)
+
+        if not ohlcv.empty:
+            pattern_info = scan_patterns(ohlcv, surviving_tickers, patterns=pattern_scans)
+            results = results[results["ticker"].isin(pattern_info.keys())]
+
+    if results.empty:
+        st.warning("No stocks found matching the selected chart patterns.")
+        st.stop()
 
 # --- Format & Display ---
 display_df = results[["ticker", "etf_ticker", "rs_rank_index", "rs_rank_overall", "rs_z_score", "volume_z_score", "avg_30d_volume"]].copy()
@@ -211,6 +254,21 @@ if ta_active and ta_info:
             f"{ta_info.get(t, {}).get('adr', None):.1f}%" if ta_info.get(t, {}).get("adr") is not None else "N/A"
             for t in tickers
         ]
+    if any(info.get("gap") is not None for info in ta_info.values()):
+        display_df["Gap"] = [
+            f"{ta_info.get(t, {}).get('gap', {}).get('type', '').title()} {ta_info.get(t, {}).get('gap', {}).get('gap_pct', '')}%"
+            if ta_info.get(t, {}).get("gap") is not None else "N/A"
+            for t in tickers
+        ]
+
+# Add pattern columns when active
+if pattern_info:
+    tickers = display_df["Ticker"].tolist()
+    display_df["Patterns"] = [
+        ", ".join(p["pattern"].replace("_", " ").title() for p in pattern_info.get(t, []))
+        if pattern_info.get(t) else "N/A"
+        for t in tickers
+    ]
 
 st.dataframe(display_df, use_container_width=True, hide_index=True)
 st.caption(f"{len(display_df)} results")

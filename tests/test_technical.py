@@ -9,8 +9,12 @@ from logic.technical import (
     check_price_touches_ma,
     compute_adr,
     compute_macd,
+    compute_momentum,
+    compute_ratio_to_ma,
     compute_rsi,
     compute_sma,
+    compute_technical_zscore_table,
+    detect_gap,
     detect_macd_crossover,
     get_latest_rsi,
 )
@@ -166,6 +170,171 @@ class TestComputeAdr:
         assert compute_adr(high, low, close, period=14) is None
 
 
+class TestComputeMomentum:
+    def test_positive_momentum(self):
+        close = pd.Series([100.0] * 10 + [120.0])
+        val = compute_momentum(close, period=10)
+        assert val == pytest.approx(20.0)  # (120-100)/100 * 100
+
+    def test_negative_momentum(self):
+        close = pd.Series([100.0] * 10 + [80.0])
+        val = compute_momentum(close, period=10)
+        assert val == pytest.approx(-20.0)
+
+    def test_insufficient_data(self):
+        close = pd.Series([100.0, 101.0])
+        assert compute_momentum(close, period=10) is None
+
+
+class TestComputeRatioToMa:
+    def test_at_ma(self):
+        close = pd.Series([100.0] * 130)
+        val = compute_ratio_to_ma(close, period=126)
+        assert val == pytest.approx(1.0)
+
+    def test_above_ma(self):
+        close = pd.Series([100.0] * 126 + [120.0])
+        val = compute_ratio_to_ma(close, period=126)
+        # SMA still near 100, close=120 → ratio ~1.2
+        assert val is not None
+        assert val > 1.0
+
+    def test_insufficient_data(self):
+        close = pd.Series([100.0] * 50)
+        assert compute_ratio_to_ma(close, period=126) is None
+
+
+class TestComputeTechnicalZscoreTable:
+    @pytest.fixture
+    def zscore_ohlcv(self) -> pd.DataFrame:
+        np.random.seed(42)
+        frames = []
+        for ticker in ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL"]:
+            dates = pd.bdate_range("2025-01-01", periods=200)
+            close = 100 + np.cumsum(np.random.randn(200) * 0.5)
+            frames.append(pd.DataFrame({
+                "ticker": ticker,
+                "date": dates,
+                "open": close - 0.5,
+                "high": close + 1.0,
+                "low": close - 1.0,
+                "close": close,
+                "volume": np.random.randint(100_000, 5_000_000, size=200),
+            }))
+        return pd.concat(frames, ignore_index=True)
+
+    def test_returns_all_columns(self, zscore_ohlcv):
+        result = compute_technical_zscore_table(
+            zscore_ohlcv, ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL"],
+            momentum_period=63, ma_period=126,
+        )
+        assert not result.empty
+        for col in ["ticker", "rsi", "momentum", "ratio_to_ma", "rsi_z", "momentum_z", "ratio_z", "composite_z"]:
+            assert col in result.columns
+
+    def test_sorted_by_composite(self, zscore_ohlcv):
+        result = compute_technical_zscore_table(
+            zscore_ohlcv, ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL"],
+        )
+        composites = result["composite_z"].tolist()
+        assert composites == sorted(composites, reverse=True)
+
+    def test_z_scores_centered(self, zscore_ohlcv):
+        result = compute_technical_zscore_table(
+            zscore_ohlcv, ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL"],
+        )
+        # Z-scores should be approximately centered around 0
+        for col in ["rsi_z", "momentum_z", "ratio_z"]:
+            valid = result[col].dropna()
+            if len(valid) > 1:
+                assert abs(valid.mean()) < 0.5
+
+    def test_empty_tickers(self, zscore_ohlcv):
+        result = compute_technical_zscore_table(zscore_ohlcv, [])
+        assert result.empty
+
+    def test_unknown_ticker(self, zscore_ohlcv):
+        result = compute_technical_zscore_table(zscore_ohlcv, ["FAKE"])
+        assert result.empty
+
+
+class TestDetectGap:
+    def test_bull_gap(self):
+        ohlcv = pd.DataFrame({
+            "open": [100.0, 110.0],
+            "high": [105.0, 115.0],
+            "low": [98.0, 106.0],  # 106 > 105 = bull gap
+            "close": [103.0, 112.0],
+        })
+        result = detect_gap(ohlcv, min_gap_pct=0.0)
+        assert result is not None
+        assert result["type"] == "bull"
+        assert result["gap_pct"] > 0
+
+    def test_bear_gap(self):
+        ohlcv = pd.DataFrame({
+            "open": [100.0, 85.0],
+            "high": [105.0, 90.0],  # 90 < 98 = bear gap
+            "low": [98.0, 82.0],
+            "close": [103.0, 87.0],
+        })
+        result = detect_gap(ohlcv, min_gap_pct=0.0)
+        assert result is not None
+        assert result["type"] == "bear"
+        assert result["gap_pct"] > 0
+
+    def test_no_gap(self):
+        ohlcv = pd.DataFrame({
+            "open": [100.0, 103.0],
+            "high": [105.0, 107.0],
+            "low": [98.0, 101.0],  # 101 < 105, no bull gap; 107 > 98, no bear gap
+            "close": [103.0, 105.0],
+        })
+        result = detect_gap(ohlcv, min_gap_pct=0.0)
+        assert result is None
+
+    def test_min_pct_filters_small_gap(self):
+        ohlcv = pd.DataFrame({
+            "open": [100.0, 106.0],
+            "high": [105.0, 110.0],
+            "low": [98.0, 105.5],  # gap = 0.5/103 = ~0.49%
+            "close": [103.0, 108.0],
+        })
+        # With 0% threshold → gap found
+        assert detect_gap(ohlcv, min_gap_pct=0.0) is not None
+        # With 1% threshold → gap too small
+        assert detect_gap(ohlcv, min_gap_pct=1.0) is None
+
+    def test_lookback_limits_search(self):
+        # Gap on bar 1, no gap on bars 2-6
+        rows = [
+            {"open": 100, "high": 105, "low": 98, "close": 103},
+            {"open": 110, "high": 115, "low": 106, "close": 112},  # bull gap
+        ]
+        for i in range(5):
+            rows.append({"open": 112 + i, "high": 114 + i, "low": 111 + i, "close": 113 + i})
+        ohlcv = pd.DataFrame(rows)
+        # lookback=2 → only checks last 2 bars, gap is further back
+        assert detect_gap(ohlcv, lookback=2) is None
+        # lookback=10 → finds the old gap
+        assert detect_gap(ohlcv, lookback=10) is not None
+
+    def test_insufficient_data(self):
+        ohlcv = pd.DataFrame({"open": [100], "high": [105], "low": [98], "close": [103]})
+        assert detect_gap(ohlcv) is None
+
+    def test_gap_pct_calculation(self):
+        ohlcv = pd.DataFrame({
+            "open": [100.0, 115.0],
+            "high": [105.0, 120.0],
+            "low": [95.0, 110.0],  # gap = 110 - 105 = 5, pct = 5/100 = 5%
+            "close": [100.0, 118.0],
+        })
+        result = detect_gap(ohlcv, min_gap_pct=0.0)
+        assert result is not None
+        assert result["gap_pct"] == 5.0
+
+
 class TestApplyTaFilters:
     @pytest.fixture
     def bulk_ohlcv(self) -> pd.DataFrame:
@@ -215,3 +384,13 @@ class TestApplyTaFilters:
 
         result_none = apply_ta_filters(bulk_ohlcv, ["AAPL", "MSFT"], adr_min=50.0)
         assert len(result_none) == 0
+
+    def test_gap_filter(self, bulk_ohlcv):
+        # With random walk data, most tickers won't have large gaps
+        result = apply_ta_filters(
+            bulk_ohlcv, ["AAPL", "MSFT", "GOOGL"],
+            gap_type="any", gap_min_pct=0.0, gap_lookback=200,
+        )
+        # All results should have 'gap' key
+        for info in result.values():
+            assert "gap" in info
