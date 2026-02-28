@@ -127,6 +127,37 @@ def compute_ratio_to_ma(close: pd.Series, period: int = 126) -> float | None:
     return float(close.iloc[-1] / sma_val)
 
 
+def compute_momentum_series(close: pd.Series, period: int = 63) -> pd.Series:
+    """Rate of change series: (close - close_shifted) / close_shifted * 100."""
+    shifted = close.shift(period)
+    return ((close - shifted) / shifted.replace(0, np.nan)) * 100
+
+
+def compute_ratio_to_ma_series(close: pd.Series, period: int = 126) -> pd.Series:
+    """Ratio of close to its SMA over time: close / SMA(period)."""
+    sma = compute_sma(close, period)
+    return close / sma.replace(0, np.nan)
+
+
+def compute_indicator_history(
+    ohlcv: pd.DataFrame,
+    rsi_period: int = 14,
+    momentum_period: int = 63,
+    ma_period: int = 126,
+) -> pd.DataFrame:
+    """Compute RSI, Momentum, and Ratio-to-MA time series for a single ticker's OHLCV.
+
+    Returns DataFrame with columns: date, rsi, momentum, ratio_to_ma.
+    """
+    ohlcv = ohlcv.sort_values("date").copy()
+    close = ohlcv["close"]
+    result = pd.DataFrame({"date": ohlcv["date"].values})
+    result["rsi"] = compute_rsi(close, rsi_period).values
+    result["momentum"] = compute_momentum_series(close, momentum_period).values
+    result["ratio_to_ma"] = compute_ratio_to_ma_series(close, ma_period).values
+    return result
+
+
 def compute_technical_zscore_table(
     ohlcv_df: pd.DataFrame,
     tickers: list[str],

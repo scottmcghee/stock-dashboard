@@ -8,9 +8,12 @@ from logic.technical import (
     apply_ta_filters,
     check_price_touches_ma,
     compute_adr,
+    compute_indicator_history,
     compute_macd,
     compute_momentum,
+    compute_momentum_series,
     compute_ratio_to_ma,
+    compute_ratio_to_ma_series,
     compute_rsi,
     compute_sma,
     compute_technical_zscore_table,
@@ -202,6 +205,64 @@ class TestComputeRatioToMa:
     def test_insufficient_data(self):
         close = pd.Series([100.0] * 50)
         assert compute_ratio_to_ma(close, period=126) is None
+
+
+class TestComputeMomentumSeries:
+    def test_returns_series(self):
+        close = pd.Series([100.0] * 20 + [120.0])
+        result = compute_momentum_series(close, period=10)
+        assert len(result) == len(close)
+        # Last value: (120 - 100) / 100 * 100 = 20%
+        assert result.iloc[-1] == pytest.approx(20.0)
+
+    def test_first_values_are_nan(self):
+        close = pd.Series([100.0] * 20)
+        result = compute_momentum_series(close, period=10)
+        assert pd.isna(result.iloc[0])
+
+
+class TestComputeRatioToMaSeries:
+    def test_returns_series(self):
+        close = pd.Series([100.0] * 130)
+        result = compute_ratio_to_ma_series(close, period=126)
+        assert len(result) == 130
+        # At the end, ratio should be 1.0
+        assert result.iloc[-1] == pytest.approx(1.0)
+
+    def test_above_ma(self):
+        close = pd.Series([100.0] * 126 + [120.0])
+        result = compute_ratio_to_ma_series(close, period=126)
+        assert result.iloc[-1] > 1.0
+
+
+class TestComputeIndicatorHistory:
+    def test_returns_all_columns(self):
+        np.random.seed(42)
+        dates = pd.bdate_range("2025-01-01", periods=200)
+        close = 100 + np.cumsum(np.random.randn(200) * 0.5)
+        ohlcv = pd.DataFrame({
+            "date": dates, "open": close - 0.5, "high": close + 1,
+            "low": close - 1, "close": close, "volume": [1_000_000] * 200,
+        })
+        result = compute_indicator_history(ohlcv, momentum_period=63, ma_period=126)
+        assert "date" in result.columns
+        assert "rsi" in result.columns
+        assert "momentum" in result.columns
+        assert "ratio_to_ma" in result.columns
+        assert len(result) == 200
+
+    def test_rsi_in_range(self):
+        np.random.seed(42)
+        dates = pd.bdate_range("2025-01-01", periods=200)
+        close = 100 + np.cumsum(np.random.randn(200) * 0.5)
+        ohlcv = pd.DataFrame({
+            "date": dates, "open": close - 0.5, "high": close + 1,
+            "low": close - 1, "close": close, "volume": [1_000_000] * 200,
+        })
+        result = compute_indicator_history(ohlcv)
+        valid_rsi = result["rsi"].dropna()
+        assert (valid_rsi >= 0).all()
+        assert (valid_rsi <= 100).all()
 
 
 class TestComputeTechnicalZscoreTable:
