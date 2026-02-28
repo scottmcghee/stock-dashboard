@@ -188,7 +188,13 @@ def precompute_indicators(ohlcv: pd.DataFrame) -> pd.DataFrame:
     if not results:
         return pd.DataFrame()
 
-    return pd.concat(results, ignore_index=True)
+    df = pd.concat(results, ignore_index=True)
+
+    # Downcast indicator columns to float32 to reduce memory
+    float_cols = df.select_dtypes(include=["float64"]).columns
+    df[float_cols] = df[float_cols].astype(np.float32)
+
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +224,13 @@ def compute_forward_returns(ohlcv: pd.DataFrame) -> pd.DataFrame:
     if not results:
         return pd.DataFrame()
 
-    return pd.concat(results, ignore_index=True)
+    df = pd.concat(results, ignore_index=True)
+
+    # Downcast forward return columns to float32
+    fwd_cols = [c for c in df.columns if c.startswith("fwd_")]
+    df[fwd_cols] = df[fwd_cols].astype(np.float32)
+
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -491,18 +503,10 @@ def build_backtest_dataframe(
     # Merge indicators with forward returns on (date, ticker)
     df = indicators.merge(fwd_returns, on=["date", "ticker"], how="left")
 
-    # Merge RS metrics if provided (take latest per date/ticker across ETFs)
+    # Merge RS metrics if provided (already aggregated per date/ticker)
     if metrics is not None and not metrics.empty:
-        # For backtesting, use the max rs_rank_overall per (date, ticker)
-        # since rs_rank_overall is the same across ETFs for a given ticker
-        metrics_agg = (
-            metrics.groupby(["date", "ticker"])
-            .agg({
-                "rs_rank_overall": "first",
-                "rs_z_score": "first",
-            })
-            .reset_index()
-        )
-        df = df.merge(metrics_agg, on=["date", "ticker"], how="left")
+        metric_cols = [c for c in ["date", "ticker", "rs_rank_overall", "rs_z_score"]
+                       if c in metrics.columns]
+        df = df.merge(metrics[metric_cols], on=["date", "ticker"], how="left")
 
     return df

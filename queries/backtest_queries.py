@@ -27,13 +27,24 @@ def _is_cache_fresh(path: Path) -> bool:
     return age < CACHE_TTL_SECONDS
 
 
+def _optimize_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert ticker to category and float64 numeric columns to float32."""
+    if df.empty:
+        return df
+    if "ticker" in df.columns:
+        df["ticker"] = df["ticker"].astype("category")
+    float_cols = df.select_dtypes(include=["float64"]).columns
+    df[float_cols] = df[float_cols].astype("float32")
+    return df
+
+
 def load_ohlcv_universe(etf_filter: str | None = None) -> pd.DataFrame:
     """Load full OHLCV history for all stocks (or one ETF's components).
 
     Returns: ticker, date, open, high, low, close, volume
     Caches to parquet keyed by etf_filter. Cache TTL: 1 day.
     """
-    cache = _cache_path("ohlcv", etf_filter)
+    cache = _cache_path("ohlcv_v2", etf_filter)
     if _is_cache_fresh(cache):
         return pd.read_parquet(cache)
 
@@ -61,34 +72,42 @@ def load_ohlcv_universe(etf_filter: str | None = None) -> pd.DataFrame:
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
 
+    df = _optimize_dtypes(df)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     df.to_parquet(cache, index=False)
     return df
 
 
 def load_metrics_universe(etf_filter: str | None = None) -> pd.DataFrame:
-    """Load full fact_stock_metrics history.
+    """Load fact_stock_metrics aggregated per (date, ticker).
 
-    Returns: date, ticker, etf_ticker, rs_rank_index, rs_rank_overall, rs_z_score
+    Server-side GROUP BY eliminates per-ETF row duplication (~14.7M → ~5M rows).
+    Returns: date, ticker, rs_rank_overall, rs_z_score
     Caches to parquet keyed by etf_filter. Cache TTL: 1 day.
     """
-    cache = _cache_path("metrics", etf_filter)
+    cache = _cache_path("metrics_agg_v2", etf_filter)
     if _is_cache_fresh(cache):
         return pd.read_parquet(cache)
 
     with stocks_connection() as conn:
         if etf_filter:
             query = """
-            SELECT date, ticker, etf_ticker, rs_rank_index, rs_rank_overall, rs_z_score
+            SELECT date, ticker,
+                   AVG(rs_rank_overall) AS rs_rank_overall,
+                   AVG(rs_z_score) AS rs_z_score
             FROM fact_stock_metrics
             WHERE etf_ticker = %(etf)s
+            GROUP BY date, ticker
             ORDER BY date, ticker
             """
             df = pd.read_sql_query(query, conn, params={"etf": etf_filter})
         else:
             query = """
-            SELECT date, ticker, etf_ticker, rs_rank_index, rs_rank_overall, rs_z_score
+            SELECT date, ticker,
+                   AVG(rs_rank_overall) AS rs_rank_overall,
+                   AVG(rs_z_score) AS rs_z_score
             FROM fact_stock_metrics
+            GROUP BY date, ticker
             ORDER BY date, ticker
             """
             df = pd.read_sql_query(query, conn)
@@ -96,6 +115,7 @@ def load_metrics_universe(etf_filter: str | None = None) -> pd.DataFrame:
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
 
+    df = _optimize_dtypes(df)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     df.to_parquet(cache, index=False)
     return df
