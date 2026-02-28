@@ -29,11 +29,13 @@ MA_PERIOD_OPTIONS = [None, 5, 8, 10, 20, 21, 50, 100, 200]
 
 # --- Reset Button ---
 if st.button("Reset Filters"):
-    st.session_state.clear()
+    st.session_state["_screener_reset"] = st.session_state.get("_screener_reset", 0) + 1
     st.rerun()
 
+_form_key = f"screener_form_{st.session_state.get('_screener_reset', 0)}"
+
 # --- Filter Form ---
-with st.form("screener_form"):
+with st.form(_form_key):
     col1, col2, col3 = st.columns(3)
     with col1:
         etfs = _get_etfs()
