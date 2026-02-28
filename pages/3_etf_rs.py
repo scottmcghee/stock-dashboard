@@ -43,6 +43,15 @@ selected = st.dataframe(
     selection_mode="single-row",
 )
 
+# --- TradingView Watchlist Export ---
+from logic.export import build_tradingview_watchlist
+from queries.stocks_queries import fetch_exchange_map
+
+_etf_tickers = grid_df["etf_ticker"].tolist()
+_exchange_map = fetch_exchange_map(_etf_tickers)
+_watchlist = build_tradingview_watchlist(_etf_tickers, _exchange_map)
+st.download_button("Export TradingView Watchlist", _watchlist, "etf_watchlist.txt", "text/plain")
+
 # --- Charts for selected ETF ---
 selected_rows = selected.selection.rows if selected.selection else []
 if not selected_rows:

@@ -50,3 +50,12 @@ display_df.columns = ["Symbol", "Current Value", "30-Day Avg", "Multiple"]
 
 st.dataframe(display_df, use_container_width=True, hide_index=True)
 st.caption(f"{len(display_df)} results")
+
+# --- TradingView Watchlist Export ---
+from logic.export import build_tradingview_watchlist
+from queries.stocks_queries import fetch_exchange_map
+
+_export_tickers = display_df["Symbol"].tolist()
+_exchange_map = fetch_exchange_map(_export_tickers)
+_watchlist = build_tradingview_watchlist(_export_tickers, _exchange_map)
+st.download_button("Export TradingView Watchlist", _watchlist, "watchlist.txt", "text/plain")

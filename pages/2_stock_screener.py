@@ -27,6 +27,11 @@ SIGNAL_SCAN_OPTIONS = [
 
 MA_PERIOD_OPTIONS = [None, 5, 8, 10, 20, 21, 50, 100, 200]
 
+# --- Reset Button ---
+if st.button("Reset Filters"):
+    st.session_state.clear()
+    st.rerun()
+
 # --- Filter Form ---
 with st.form("screener_form"):
     col1, col2, col3 = st.columns(3)
@@ -272,3 +277,12 @@ if pattern_info:
 
 st.dataframe(display_df, use_container_width=True, hide_index=True)
 st.caption(f"{len(display_df)} results")
+
+# --- TradingView Watchlist Export ---
+from logic.export import build_tradingview_watchlist
+from queries.stocks_queries import fetch_exchange_map
+
+_export_tickers = display_df["Ticker"].tolist()
+_exchange_map = fetch_exchange_map(_export_tickers)
+_watchlist = build_tradingview_watchlist(_export_tickers, _exchange_map)
+st.download_button("Export TradingView Watchlist", _watchlist, "watchlist.txt", "text/plain")

@@ -146,6 +146,15 @@ event = st.dataframe(
 
 st.caption(f"{len(display_df)} stocks — click a row to see indicator charts")
 
+# --- TradingView Watchlist Export ---
+from logic.export import build_tradingview_watchlist
+from queries.stocks_queries import fetch_exchange_map
+
+_export_tickers = zscore_df["ticker"].tolist()
+_exchange_map = fetch_exchange_map(_export_tickers)
+_watchlist = build_tradingview_watchlist(_export_tickers, _exchange_map)
+st.download_button("Export TradingView Watchlist", _watchlist, "zscore_watchlist.txt", "text/plain")
+
 # --- Charts for selected row ---
 selected_rows = event.selection.rows if event and event.selection else []
 if not selected_rows:

@@ -69,7 +69,7 @@ def _format_rs_columns(df: pd.DataFrame) -> pd.DataFrame:
     return display
 
 
-def _display_scan_tab(df: pd.DataFrame, value_col: str = "signal_value") -> None:
+def _display_scan_tab(df: pd.DataFrame, value_col: str = "signal_value", tab_name: str = "scan") -> None:
     """Display a scan result table with z-scores."""
     if df.empty:
         st.info("No signals found with current thresholds.")
@@ -93,6 +93,15 @@ def _display_scan_tab(df: pd.DataFrame, value_col: str = "signal_value") -> None
     st.dataframe(display[available], use_container_width=True, hide_index=True)
     st.caption(f"{len(display)} results")
 
+    # --- TradingView Watchlist Export ---
+    from logic.export import build_tradingview_watchlist
+    from queries.stocks_queries import fetch_exchange_map
+
+    _tickers = display["symbol"].tolist()
+    _exchange_map = fetch_exchange_map(_tickers)
+    _watchlist = build_tradingview_watchlist(_tickers, _exchange_map)
+    st.download_button("Export TradingView Watchlist", _watchlist, f"{tab_name}_watchlist.txt", "text/plain", key=f"export_{tab_name}")
+
 
 # --- Tabs ---
 tabs = st.tabs([
@@ -109,35 +118,35 @@ with tabs[0]:
     st.caption("High vanna = when vol drops, delta increases (bullish). Spread: +3.38% over 10d.")
     with st.spinner("Running vanna scan..."):
         vanna_df = _run_vanna(float(vanna_pct))
-    _display_scan_tab(vanna_df)
+    _display_scan_tab(vanna_df, tab_name="vanna")
 
 with tabs[1]:
     st.subheader("Flownet Extremes (Contrarian)")
     st.caption("Extreme negative flow -> contrarian buy. +1.25% 10d, 56.4% win rate.")
     with st.spinner("Running flownet scan..."):
         flownet_df = _run_flownet(float(flownet_pct))
-    _display_scan_tab(flownet_df)
+    _display_scan_tab(flownet_df, tab_name="flownet")
 
 with tabs[2]:
     st.subheader("Volume Spikes")
     st.caption("Volume > Nx 20d average. Predicts higher absolute moves.")
     with st.spinner("Running volume scan..."):
         volume_df = _run_volume(float(vol_mult))
-    _display_scan_tab(volume_df)
+    _display_scan_tab(volume_df, tab_name="volume")
 
 with tabs[3]:
     st.subheader("dxoi Change")
     st.caption("Big positioning shifts precede price moves. +2.01% at 5d.")
     with st.spinner("Running dxoi scan..."):
         dxoi_df = _run_dxoi(float(dxoi_pct))
-    _display_scan_tab(dxoi_df)
+    _display_scan_tab(dxoi_df, tab_name="dxoi")
 
 with tabs[4]:
     st.subheader("GEX Regime")
     st.caption("Negative GEX -> higher volatility. Very high GEX -> strong trending.")
     with st.spinner("Running GEX scan..."):
         gex_df = _run_gex()
-    _display_scan_tab(gex_df)
+    _display_scan_tab(gex_df, tab_name="gex")
 
 with tabs[5]:
     st.subheader("Composite Signal Score")
@@ -162,3 +171,12 @@ with tabs[5]:
         available = [c for c in cols if c in display.columns]
         st.dataframe(display[available], use_container_width=True, hide_index=True)
         st.caption(f"{len(display)} symbols with active signals")
+
+        # --- TradingView Watchlist Export ---
+        from logic.export import build_tradingview_watchlist
+        from queries.stocks_queries import fetch_exchange_map
+
+        _tickers = display["symbol"].tolist()
+        _exchange_map = fetch_exchange_map(_tickers)
+        _watchlist = build_tradingview_watchlist(_tickers, _exchange_map)
+        st.download_button("Export TradingView Watchlist", _watchlist, "composite_watchlist.txt", "text/plain", key="export_composite")

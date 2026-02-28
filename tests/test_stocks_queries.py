@@ -129,6 +129,31 @@ class TestFetchEtfMetrics:
             assert len(result) == 1
 
 
+class TestFetchExchangeMap:
+    def test_returns_exchange_codes(self, mock_stocks_pool):
+        mock_df = pd.DataFrame({
+            "ticker": ["AAPL", "JPM"],
+            "exchange": ["NMS", "NYQ"],
+        })
+        with patch("pandas.read_sql_query", return_value=mock_df):
+            from queries.stocks_queries import fetch_exchange_map
+            result = fetch_exchange_map(["AAPL", "JPM"])
+            assert result == {"AAPL": "NMS", "JPM": "NYQ"}
+
+    def test_missing_ticker_returns_none(self, mock_stocks_pool):
+        mock_df = pd.DataFrame({"ticker": ["AAPL"], "exchange": ["NMS"]})
+        with patch("pandas.read_sql_query", return_value=mock_df):
+            from queries.stocks_queries import fetch_exchange_map
+            result = fetch_exchange_map(["AAPL", "UNKNOWN"])
+            assert result["AAPL"] == "NMS"
+            assert result["UNKNOWN"] is None
+
+    def test_empty_list(self, mock_stocks_pool):
+        from queries.stocks_queries import fetch_exchange_map
+        result = fetch_exchange_map([])
+        assert result == {}
+
+
 class TestFetchBulkWeinsteinData:
     def test_returns_multi_ticker_data(self, mock_stocks_pool):
         mock_df = pd.DataFrame({

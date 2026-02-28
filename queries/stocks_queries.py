@@ -143,6 +143,20 @@ def fetch_etf_ohlcv(
         return df
 
 
+def fetch_exchange_map(tickers: list[str]) -> dict[str, str | None]:
+    """Lookup exchange codes from dim_stock for a list of tickers."""
+    if not tickers:
+        return {}
+    with stocks_connection() as conn:
+        placeholders = ",".join(["%s"] * len(tickers))
+        query = f"SELECT ticker, exchange FROM dim_stock WHERE ticker IN ({placeholders})"
+        df = pd.read_sql_query(query, conn, params=tickers)
+    result: dict[str, str | None] = {t: None for t in tickers}
+    for _, row in df.iterrows():
+        result[row["ticker"]] = row["exchange"]
+    return result
+
+
 def search_stocks_by_metrics(
     rs_rank_min: float | None = None,
     rs_rank_max: float | None = None,
