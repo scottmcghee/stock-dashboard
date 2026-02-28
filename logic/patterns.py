@@ -307,6 +307,15 @@ def detect_v_bottom(
     }
 
 
+# Pattern windows: minimum bars needed for each detector
+_PATTERN_WINDOWS = {
+    "high_tight_flag": 75,   # 60 rally + 15 flag
+    "bull_flag": 25,         # 15 pole + 10 flag
+    "bear_flag": 25,         # 15 pole + 10 flag
+    "cup_and_handle": 75,    # 60 cup + 15 handle
+    "v_bottom": 30,          # single window
+}
+
 # All pattern detectors in scanning order
 PATTERN_DETECTORS = {
     "high_tight_flag": detect_high_tight_flag,
@@ -351,3 +360,39 @@ def scan_patterns(
             results[ticker] = detected
 
     return results
+
+
+def rolling_detect_patterns(ohlcv: pd.DataFrame) -> dict[str, np.ndarray]:
+    """Run all pattern detectors at every bar of a single ticker's OHLCV.
+
+    For each bar i, slices ohlcv[max(0, i+1-window):i+1] and calls the
+    detector on that slice.  Returns dict mapping "has_<pattern>" to int8
+    arrays of length len(ohlcv).
+
+    Args:
+        ohlcv: Single-ticker OHLCV sorted by date.
+
+    Returns:
+        Dict mapping column names (e.g. "has_bull_flag") to int8 arrays.
+    """
+    n = len(ohlcv)
+    result: dict[str, np.ndarray] = {}
+
+    for pattern_name, detector in PATTERN_DETECTORS.items():
+        col_name = f"has_{pattern_name}"
+        arr = np.zeros(n, dtype=np.int8)
+        window = _PATTERN_WINDOWS[pattern_name]
+
+        if n < window:
+            result[col_name] = arr
+            continue
+
+        for i in range(window - 1, n):
+            start = max(0, i + 1 - window)
+            slc = ohlcv.iloc[start:i + 1]
+            if detector(slc) is not None:
+                arr[i] = 1
+
+        result[col_name] = arr
+
+    return result

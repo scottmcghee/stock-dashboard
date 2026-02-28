@@ -5,11 +5,13 @@ import pandas as pd
 import pytest
 
 from logic.backtest import (
+    FILTER_RANGES,
     FILTER_TO_COLUMN,
     FilterSpec,
     HorizonStats,
     Strategy,
     StrategyResult,
+    _apply_filter,
     apply_bh_correction,
     build_backtest_dataframe,
     classify_regimes,
@@ -481,7 +483,7 @@ class TestGenerateStrategies:
         assert len(s1) < len(s2) < len(s3)
         # With ~18 filter options × 5 regimes = 90 single-filter strategies
         assert len(s1) > 50
-        assert len(s3) < 10_000  # Should be in the hundreds/low thousands
+        assert len(s3) < 25_000  # Should be in the low thousands
 
     def test_max_filters_respected(self):
         strategies = generate_strategies(max_filters=2)
@@ -512,3 +514,92 @@ class TestBuildBacktestDataframe:
         result = build_backtest_dataframe(multi_ticker_ohlcv, metrics)
         assert "rs_rank_overall" in result.columns
         assert "rs_z_score" in result.columns
+
+
+# ---------------------------------------------------------------------------
+# TestADRFilter
+# ---------------------------------------------------------------------------
+
+
+class TestADRFilter:
+    def test_adr_in_filter_ranges(self):
+        """adr_14_min should be in FILTER_RANGES."""
+        assert "adr_14_min" in FILTER_RANGES
+        assert len(FILTER_RANGES["adr_14_min"]) >= 1
+
+    def test_adr_filter_evaluation(self, sample_indicators_df):
+        """adr_14_min filter should work in strategy evaluation."""
+        # Add adr_14 column to sample data
+        sample_indicators_df["adr_14"] = np.random.uniform(1.0, 10.0, len(sample_indicators_df))
+        strategy = Strategy(
+            name="high_adr",
+            filters=[FilterSpec(name="adr_14_min", value=5.0)],
+        )
+        result = evaluate_strategy(sample_indicators_df, strategy)
+        assert result.n_signals > 0
+        assert result.n_signals < len(sample_indicators_df)
+
+
+# ---------------------------------------------------------------------------
+# TestPatternFilters
+# ---------------------------------------------------------------------------
+
+
+class TestPatternFilters:
+    def test_pattern_columns_in_precompute(self, multi_ticker_ohlcv):
+        """precompute_indicators() should produce has_* pattern columns."""
+        result = precompute_indicators(multi_ticker_ohlcv)
+        expected_pattern_cols = {
+            "has_high_tight_flag", "has_bull_flag", "has_bear_flag",
+            "has_cup_and_handle", "has_v_bottom",
+        }
+        assert expected_pattern_cols.issubset(set(result.columns))
+
+    def test_pattern_columns_are_int8(self, multi_ticker_ohlcv):
+        """Pattern columns should be int8 (0/1)."""
+        result = precompute_indicators(multi_ticker_ohlcv)
+        for col in ["has_bull_flag", "has_bear_flag", "has_v_bottom"]:
+            assert result[col].dtype == np.int8
+
+    def test_pattern_filters_in_filter_to_column(self):
+        """All has_* pattern filters should be in FILTER_TO_COLUMN."""
+        for name in ["has_bull_flag", "has_bear_flag", "has_high_tight_flag",
+                      "has_cup_and_handle", "has_v_bottom"]:
+            assert name in FILTER_TO_COLUMN
+
+    def test_pattern_filters_in_filter_ranges(self):
+        """All has_* pattern filters should be in FILTER_RANGES."""
+        for name in ["has_bull_flag", "has_bear_flag", "has_high_tight_flag",
+                      "has_cup_and_handle", "has_v_bottom"]:
+            assert name in FILTER_RANGES
+            assert FILTER_RANGES[name] == [True]
+
+    def test_apply_filter_has_prefix(self):
+        """_apply_filter should treat has_ prefix as boolean."""
+        series = pd.Series([0, 1, 0, 1, 0], dtype=np.int8)
+        fspec = FilterSpec(name="has_bull_flag", value=True)
+        mask = _apply_filter(series, fspec)
+        assert mask.tolist() == [False, True, False, True, False]
+
+    def test_pattern_filter_in_strategy(self, sample_indicators_df):
+        """A has_bull_flag filter should work in evaluate_strategy."""
+        # Add pattern column: ~20% of rows have pattern
+        np.random.seed(42)
+        sample_indicators_df["has_bull_flag"] = np.random.choice(
+            [0, 1], size=len(sample_indicators_df), p=[0.8, 0.2],
+        ).astype(np.int8)
+        strategy = Strategy(
+            name="bull_flags",
+            filters=[FilterSpec(name="has_bull_flag", value=True)],
+        )
+        result = evaluate_strategy(sample_indicators_df, strategy)
+        expected = int(sample_indicators_df["has_bull_flag"].sum())
+        assert result.n_signals == expected
+
+    def test_generate_strategies_includes_patterns(self):
+        """generate_strategies should produce pattern-based strategies."""
+        strategies = generate_strategies(max_filters=1)
+        pattern_strategies = [s for s in strategies if any(
+            f.name.startswith("has_") for f in s.filters
+        )]
+        assert len(pattern_strategies) > 0

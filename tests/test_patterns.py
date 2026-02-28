@@ -11,6 +11,7 @@ from logic.patterns import (
     detect_cup_and_handle,
     detect_high_tight_flag,
     detect_v_bottom,
+    rolling_detect_patterns,
     scan_patterns,
 )
 
@@ -193,3 +194,57 @@ class TestScanPatterns:
     def test_all_detectors_registered(self):
         expected = {"high_tight_flag", "bull_flag", "bear_flag", "cup_and_handle", "v_bottom"}
         assert set(PATTERN_DETECTORS.keys()) == expected
+
+
+class TestRollingDetectPatterns:
+    def test_output_keys_and_lengths(self):
+        """Result should have 5 pattern keys with arrays matching input length."""
+        ohlcv = _make_ohlcv(list(np.linspace(100, 150, 100)))
+        result = rolling_detect_patterns(ohlcv)
+        expected_keys = {
+            "has_high_tight_flag", "has_bull_flag", "has_bear_flag",
+            "has_cup_and_handle", "has_v_bottom",
+        }
+        assert set(result.keys()) == expected_keys
+        for arr in result.values():
+            assert len(arr) == 100
+            assert arr.dtype == np.int8
+
+    def test_short_data_returns_all_zeros(self):
+        """Data shorter than any window should produce all-zero arrays."""
+        ohlcv = _make_ohlcv([100.0] * 5)
+        result = rolling_detect_patterns(ohlcv)
+        for arr in result.values():
+            assert len(arr) == 5
+            assert arr.sum() == 0
+
+    def test_empty_data(self):
+        """Empty DataFrame should return all-zero arrays of length 0."""
+        ohlcv = _make_ohlcv([])
+        result = rolling_detect_patterns(ohlcv)
+        for arr in result.values():
+            assert len(arr) == 0
+
+    def test_bull_flag_detected_at_correct_bar(self):
+        """A synthetic bull flag should trigger at the bar where the flag ends."""
+        # Build: 20 bars of flat base, 15-bar pole, 10-bar flag, 10 bars of noise
+        base = [100.0] * 20
+        pole = list(np.linspace(100, 115, 15))
+        flag = list(np.linspace(114, 112, 10))
+        noise = [112.0] * 10
+        ohlcv = _make_ohlcv(base + pole + flag + noise)
+
+        result = rolling_detect_patterns(ohlcv)
+        arr = result["has_bull_flag"]
+        # The bull flag should be detected somewhere around bars 44 (end of flag)
+        # At minimum it should be detected at bar 44 (0-indexed: base=20 + pole=15 + flag=10 - 1 = 44)
+        assert arr[44] == 1
+
+    def test_values_are_binary(self):
+        """All values should be 0 or 1."""
+        np.random.seed(42)
+        close = 100 + np.cumsum(np.random.randn(200) * 0.5)
+        ohlcv = _make_ohlcv(close.tolist())
+        result = rolling_detect_patterns(ohlcv)
+        for arr in result.values():
+            assert set(np.unique(arr)).issubset({0, 1})

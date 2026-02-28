@@ -21,6 +21,7 @@ from logic.technical import (
     compute_rsi,
     compute_sma,
 )
+from logic.patterns import rolling_detect_patterns
 from logic.weinstein import calculate_weinstein_stages
 
 
@@ -34,7 +35,7 @@ class FilterSpec:
     """A single filter criterion."""
 
     name: str  # e.g. "rsi_min", "rs_rank_overall_min"
-    value: float | str  # threshold value
+    value: float | str | bool  # threshold value
 
 
 @dataclass
@@ -183,6 +184,11 @@ def precompute_indicators(ohlcv: pd.DataFrame) -> pd.DataFrame:
         row["weinstein_stage"] = staged["stage"].values
         row["weinstein_stage_num"] = row["weinstein_stage"].map(STAGE_MAP).values
 
+        # Chart patterns (rolling detection)
+        patterns = rolling_detect_patterns(g)
+        for col_name, arr in patterns.items():
+            row[col_name] = arr
+
         results.append(row)
 
     if not results:
@@ -243,7 +249,9 @@ def _apply_filter(series: pd.Series, fspec: FilterSpec) -> pd.Series:
     name = fspec.name
     value = fspec.value
 
-    if name.endswith("_min"):
+    if name.startswith("has_"):
+        return series.astype(bool)
+    elif name.endswith("_min"):
         return series >= float(value)
     elif name.endswith("_max"):
         return series <= float(value)
@@ -278,6 +286,11 @@ FILTER_TO_COLUMN = {
     "adr_14_min": "adr_14",
     "adr_14_max": "adr_14",
     "weinstein_stage": "weinstein_stage",
+    "has_bull_flag": "has_bull_flag",
+    "has_bear_flag": "has_bear_flag",
+    "has_high_tight_flag": "has_high_tight_flag",
+    "has_cup_and_handle": "has_cup_and_handle",
+    "has_v_bottom": "has_v_bottom",
 }
 
 HORIZON_COLUMNS = ["fwd_5", "fwd_10", "fwd_20", "fwd_63"]
@@ -422,7 +435,13 @@ FILTER_RANGES: dict[str, list] = {
     "ratio_to_200ma_min": [1.0, 1.05],
     "ratio_to_200ma_max": [0.95, 0.90],
     "volume_z_min": [1.5, 2.0, 3.0],
+    "adr_14_min": [3.0, 5.0, 7.0],
     "weinstein_stage": ["Stage 2", "Stage 4"],
+    "has_bull_flag": [True],
+    "has_bear_flag": [True],
+    "has_high_tight_flag": [True],
+    "has_cup_and_handle": [True],
+    "has_v_bottom": [True],
 }
 
 REGIMES: list[str | None] = [None, "bull", "bear", "volatile", "correction"]
