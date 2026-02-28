@@ -106,3 +106,27 @@ def fetch_bulk_ohlcv_for_ta(
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
     return df
+
+
+def fetch_bulk_etf_ohlcv_for_ta(
+    etf_tickers: list[str], lookback_days: int = 300
+) -> pd.DataFrame:
+    """Fetch recent OHLCV for multiple ETFs from fact_index_ohlc.
+
+    Returns DataFrame with columns: ticker, date, open, high, low, close, volume.
+    """
+    if not etf_tickers:
+        return pd.DataFrame()
+    with stocks_connection() as conn:
+        placeholders = ",".join(["%s"] * len(etf_tickers))
+        query = f"""
+        SELECT ticker, date, open, high, low, close, volume
+        FROM fact_index_ohlc
+        WHERE ticker IN ({placeholders})
+          AND date >= NOW() - INTERVAL '{int(lookback_days)} days'
+        ORDER BY ticker, date
+        """
+        df = pd.read_sql_query(query, conn, params=etf_tickers)
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"])
+    return df

@@ -83,6 +83,29 @@ class TestFetchBulkOhlcvForTa:
         assert result.empty
 
 
+class TestFetchBulkEtfOhlcvForTa:
+    def test_returns_dataframe(self, mock_stocks_pool):
+        mock_df = pd.DataFrame({
+            "ticker": ["XLK"] * 5,
+            "date": pd.to_datetime(["2025-01-01"] * 5),
+            "open": [200.0] * 5,
+            "high": [202.0] * 5,
+            "low": [199.0] * 5,
+            "close": [201.0] * 5,
+            "volume": [5000] * 5,
+        })
+        with patch("pandas.read_sql_query", return_value=mock_df):
+            from queries.screener_queries import fetch_bulk_etf_ohlcv_for_ta
+            result = fetch_bulk_etf_ohlcv_for_ta(["XLK"])
+            assert len(result) == 5
+            assert pd.api.types.is_datetime64_any_dtype(result["date"])
+
+    def test_empty_tickers(self):
+        from queries.screener_queries import fetch_bulk_etf_ohlcv_for_ta
+        result = fetch_bulk_etf_ohlcv_for_ta([])
+        assert result.empty
+
+
 class TestSearchStocksRestrictTickers:
     """Test the restrict_tickers parameter added to search_stocks_by_metrics."""
 

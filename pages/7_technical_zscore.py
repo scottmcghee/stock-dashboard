@@ -42,6 +42,7 @@ with st.form("zscore_form"):
             index=2,
             format_func=lambda x: f"{x}-day SMA",
         )
+    etf_mode = st.checkbox("Run on ETFs instead of component stocks")
     submitted = st.form_submit_button("Compute", type="primary")
 
 if not submitted and "zscore_df" not in st.session_state:
@@ -49,40 +50,71 @@ if not submitted and "zscore_df" not in st.session_state:
 
 # --- Fetch and compute (only on form submit) ---
 if submitted:
-    with st.spinner("Loading tickers..."):
-        from queries.stocks_queries import search_stocks_by_metrics
+    if etf_mode:
+        # ETF mode: run indicators on ETFs themselves
+        with st.spinner("Loading ETFs..."):
+            if etf_filter:
+                tickers = [etf_filter]
+            else:
+                tickers = _get_etfs()
 
-        results = search_stocks_by_metrics(etf_ticker=etf_filter)
-        if results.empty:
-            st.warning("No stocks found in the selected universe.")
+        st.info(f"Computing indicators for {len(tickers)} ETFs...")
+
+        with st.spinner("Fetching ETF OHLCV and computing z-scores..."):
+            from queries.screener_queries import fetch_bulk_etf_ohlcv_for_ta
+            from logic.technical import compute_technical_zscore_table
+
+            ohlcv = fetch_bulk_etf_ohlcv_for_ta(tickers, lookback_days=max(300, ma_period + 50))
+            if ohlcv.empty:
+                st.warning("No ETF OHLCV data available.")
+                st.stop()
+
+            zscore_df = compute_technical_zscore_table(
+                ohlcv, tickers,
+                momentum_period=momentum_period,
+                ma_period=ma_period,
+            )
+
+        if zscore_df.empty:
+            st.warning("Insufficient data to compute z-scores.")
             st.stop()
-        tickers = results["ticker"].unique().tolist()
 
-    st.info(f"Computing indicators for {len(tickers)} stocks...")
+    else:
+        # Stock mode: run indicators on component stocks
+        with st.spinner("Loading tickers..."):
+            from queries.stocks_queries import search_stocks_by_metrics
 
-    with st.spinner("Fetching OHLCV and computing z-scores..."):
-        from queries.screener_queries import fetch_bulk_ohlcv_for_ta
-        from logic.technical import compute_technical_zscore_table
+            results = search_stocks_by_metrics(etf_ticker=etf_filter)
+            if results.empty:
+                st.warning("No stocks found in the selected universe.")
+                st.stop()
+            tickers = results["ticker"].unique().tolist()
 
-        ohlcv = fetch_bulk_ohlcv_for_ta(tickers, lookback_days=max(300, ma_period + 50))
-        if ohlcv.empty:
-            st.warning("No OHLCV data available.")
+        st.info(f"Computing indicators for {len(tickers)} stocks...")
+
+        with st.spinner("Fetching OHLCV and computing z-scores..."):
+            from queries.screener_queries import fetch_bulk_ohlcv_for_ta
+            from logic.technical import compute_technical_zscore_table
+
+            ohlcv = fetch_bulk_ohlcv_for_ta(tickers, lookback_days=max(300, ma_period + 50))
+            if ohlcv.empty:
+                st.warning("No OHLCV data available.")
+                st.stop()
+
+            zscore_df = compute_technical_zscore_table(
+                ohlcv, tickers,
+                momentum_period=momentum_period,
+                ma_period=ma_period,
+            )
+
+        if zscore_df.empty:
+            st.warning("Insufficient data to compute z-scores.")
             st.stop()
 
-        zscore_df = compute_technical_zscore_table(
-            ohlcv, tickers,
-            momentum_period=momentum_period,
-            ma_period=ma_period,
-        )
-
-    if zscore_df.empty:
-        st.warning("Insufficient data to compute z-scores.")
-        st.stop()
-
-    # Merge ETF info
-    if "etf_ticker" in results.columns:
-        etf_map = results.drop_duplicates("ticker").set_index("ticker")["etf_ticker"]
-        zscore_df["etf"] = zscore_df["ticker"].map(etf_map)
+        # Merge ETF info
+        if "etf_ticker" in results.columns:
+            etf_map = results.drop_duplicates("ticker").set_index("ticker")["etf_ticker"]
+            zscore_df["etf"] = zscore_df["ticker"].map(etf_map)
 
     # Store in session state for row selection
     st.session_state["zscore_df"] = zscore_df
