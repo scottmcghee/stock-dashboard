@@ -48,3 +48,8 @@ class TestBuildTradingviewWatchlist:
         result = build_tradingview_watchlist(["B", "A", "C"], exchange_map)
         lines = result.split("\n")
         assert lines == ["NASDAQ:B", "NYSE:A", "AMEX:C"]
+
+    def test_deduplicates_tickers(self):
+        exchange_map = {"AAPL": "NMS"}
+        result = build_tradingview_watchlist(["AAPL", "AAPL", "AAPL"], exchange_map)
+        assert result == "NASDAQ:AAPL"

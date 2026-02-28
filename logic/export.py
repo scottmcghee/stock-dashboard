@@ -20,8 +20,12 @@ def build_tradingview_watchlist(
     exchange_map: dict[str, str | None],
 ) -> str:
     """Build TradingView watchlist text: EXCHANGE:TICKER per line."""
+    seen: set[str] = set()
     lines = []
     for ticker in tickers:
+        if ticker in seen:
+            continue
+        seen.add(ticker)
         exchange = _map_exchange(exchange_map.get(ticker))
         lines.append(f"{exchange}:{ticker}")
     return "\n".join(lines)
