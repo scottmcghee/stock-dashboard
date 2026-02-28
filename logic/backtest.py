@@ -353,8 +353,11 @@ def evaluate_strategy(
         sharpe = mean_ret / std_ret if std_ret > 0 else 0.0
 
         # One-sample t-test: H0 mean return = 0
-        t_stat, p_val = stats.ttest_1samp(returns, 0.0)
-        p_val = float(p_val)
+        if std_ret > 0:
+            _, p_val = stats.ttest_1samp(returns, 0.0)
+            p_val = float(p_val)
+        else:
+            p_val = 1.0
 
         result.horizons[label] = HorizonStats(
             mean_return=mean_ret,
