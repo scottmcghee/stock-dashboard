@@ -84,7 +84,7 @@ with col5:
     sort_by_horizon = st.selectbox("Sort by horizon", ["T+5", "T+10", "T+20", "T+63"], index=2)
 
 sort_metric = st.radio(
-    "Sort metric", ["mean_return", "sharpe", "win_rate"], horizontal=True
+    "Sort metric", ["mean_return", "median_return", "sharpe", "win_rate"], horizontal=True
 )
 
 btn_col1, btn_col2, btn_col3 = st.columns(3)
@@ -96,7 +96,7 @@ with btn_col2:
     run = st.button("Run Backtest", type="primary")
 with btn_col3:
     if st.button("Clear Results"):
-        for key in ["bt_indicators_df", "bt_results", "bt_results_df", "bt_regime_series"]:
+        for key in ["bt_indicators_df", "bt_results", "bt_results_df", "bt_regime_series", "bt_spy_ohlcv"]:
             st.session_state.pop(key, None)
         st.rerun()
 
@@ -131,6 +131,7 @@ if run:
 
     progress.progress(65, text="Classifying market regimes...")
     regime_series = classify_regimes(spy) if not spy.empty else None
+    st.session_state["bt_spy_ohlcv"] = spy
     del spy
     gc.collect()
 
@@ -173,6 +174,71 @@ if "bt_results" not in st.session_state:
 indicators_df = st.session_state["bt_indicators_df"]
 results: list[StrategyResult] = st.session_state["bt_results"]
 regime_series = st.session_state.get("bt_regime_series")
+spy_ohlcv = st.session_state.get("bt_spy_ohlcv")
+
+# ---------------------------------------------------------------------------
+# Regime context chart (SPY + regime shading)
+# ---------------------------------------------------------------------------
+
+if regime_series is not None and spy_ohlcv is not None and not spy_ohlcv.empty:
+    with st.expander("SPY / Market Regime Context", expanded=False):
+        spy_sorted = spy_ohlcv.sort_values("date").set_index("date")
+        fig_regime = go.Figure()
+        fig_regime.add_trace(go.Scatter(
+            x=spy_sorted.index,
+            y=spy_sorted["close"],
+            mode="lines",
+            name="SPY",
+            line=dict(color="white", width=1.5),
+        ))
+
+        # Shade regime periods
+        regime_colors = {
+            "bull": "rgba(0,200,0,0.15)",
+            "bear": "rgba(200,0,0,0.15)",
+            "volatile": "rgba(255,165,0,0.15)",
+            "correction": "rgba(200,0,0,0.30)",
+        }
+        rs = regime_series.dropna()
+        if not rs.empty:
+            # Build contiguous regime blocks
+            prev_regime = rs.iloc[0]
+            block_start = rs.index[0]
+            for dt, regime in rs.items():
+                if regime != prev_regime:
+                    if prev_regime in regime_colors:
+                        fig_regime.add_vrect(
+                            x0=block_start, x1=dt,
+                            fillcolor=regime_colors[prev_regime],
+                            line_width=0, layer="below",
+                        )
+                    prev_regime = regime
+                    block_start = dt
+            # Final block
+            if prev_regime in regime_colors:
+                fig_regime.add_vrect(
+                    x0=block_start, x1=rs.index[-1],
+                    fillcolor=regime_colors[prev_regime],
+                    line_width=0, layer="below",
+                )
+
+        fig_regime.update_layout(
+            title="SPY with Market Regime Classification",
+            xaxis_title="Date",
+            yaxis_title="SPY Close",
+            height=350,
+            legend=dict(orientation="h", y=1.12),
+            margin=dict(t=50, b=40),
+        )
+        # Add legend entries for regime colors
+        for regime, color in regime_colors.items():
+            fig_regime.add_trace(go.Scatter(
+                x=[None], y=[None], mode="markers",
+                marker=dict(size=10, color=color.replace("0.15", "0.6").replace("0.30", "0.6")),
+                name=regime.capitalize(),
+                showlegend=True,
+            ))
+        st.plotly_chart(fig_regime, use_container_width=True)
 
 # Filter to significant or show all
 display_results = results
@@ -199,12 +265,14 @@ for r in display_results:
         if label in r.horizons:
             hs = r.horizons[label]
             row[f"{label}_mean"] = round(hs.mean_return * 100, 2)
+            row[f"{label}_med"] = round(hs.median_return * 100, 2)
             row[f"{label}_wr"] = round(hs.win_rate * 100, 1)
             row[f"{label}_sharpe"] = round(hs.sharpe, 3)
             row[f"{label}_pval"] = round(hs.p_value_adj, 4)
             row[f"{label}_sig"] = hs.significant
         else:
             row[f"{label}_mean"] = None
+            row[f"{label}_med"] = None
             row[f"{label}_wr"] = None
             row[f"{label}_sharpe"] = None
             row[f"{label}_pval"] = None
@@ -214,7 +282,13 @@ for r in display_results:
 results_df = pd.DataFrame(table_rows)
 
 # Sort
-sort_col = f"{sort_by_horizon}_{sort_metric}"
+_METRIC_TO_COL_SUFFIX = {
+    "mean_return": "mean",
+    "median_return": "med",
+    "sharpe": "sharpe",
+    "win_rate": "wr",
+}
+sort_col = f"{sort_by_horizon}_{_METRIC_TO_COL_SUFFIX.get(sort_metric, sort_metric)}"
 if sort_col in results_df.columns:
     results_df = results_df.sort_values(sort_col, ascending=False, na_position="last")
     results_df = results_df.reset_index(drop=True)
@@ -233,15 +307,19 @@ event = st.dataframe(
         "regime": st.column_config.TextColumn("Regime"),
         "n_signals": st.column_config.NumberColumn("Signals", format="%d"),
         "T+5_mean": st.column_config.NumberColumn("T+5 Mean%", format="%.2f"),
+        "T+5_med": st.column_config.NumberColumn("T+5 Med%", format="%.2f"),
         "T+5_wr": st.column_config.NumberColumn("T+5 WR%", format="%.1f"),
         "T+5_sharpe": st.column_config.NumberColumn("T+5 Sharpe", format="%.3f"),
         "T+10_mean": st.column_config.NumberColumn("T+10 Mean%", format="%.2f"),
+        "T+10_med": st.column_config.NumberColumn("T+10 Med%", format="%.2f"),
         "T+10_wr": st.column_config.NumberColumn("T+10 WR%", format="%.1f"),
         "T+10_sharpe": st.column_config.NumberColumn("T+10 Sharpe", format="%.3f"),
         "T+20_mean": st.column_config.NumberColumn("T+20 Mean%", format="%.2f"),
+        "T+20_med": st.column_config.NumberColumn("T+20 Med%", format="%.2f"),
         "T+20_wr": st.column_config.NumberColumn("T+20 WR%", format="%.1f"),
         "T+20_sharpe": st.column_config.NumberColumn("T+20 Sharpe", format="%.3f"),
         "T+63_mean": st.column_config.NumberColumn("T+63 Mean%", format="%.2f"),
+        "T+63_med": st.column_config.NumberColumn("T+63 Med%", format="%.2f"),
         "T+63_wr": st.column_config.NumberColumn("T+63 WR%", format="%.1f"),
         "T+63_sharpe": st.column_config.NumberColumn("T+63 Sharpe", format="%.3f"),
     },
