@@ -520,3 +520,21 @@ class TestApplyTaFilters:
         assert set(result.keys()) == {"AAPL", "MSFT", "GOOGL"}
         for info in result.values():
             assert info == {}
+
+    def test_macd_not_bearish_filter(self, bulk_ohlcv):
+        """'not bearish' keeps tickers with bullish or None crossover, excludes bearish."""
+        result = apply_ta_filters(
+            bulk_ohlcv, ["AAPL", "MSFT", "GOOGL"],
+            macd_crossover="not bearish",
+        )
+        for info in result.values():
+            assert info["macd_cross"] != "bearish"
+
+    def test_macd_not_bullish_filter(self, bulk_ohlcv):
+        """'not bullish' keeps tickers with bearish or None crossover, excludes bullish."""
+        result = apply_ta_filters(
+            bulk_ohlcv, ["AAPL", "MSFT", "GOOGL"],
+            macd_crossover="not bullish",
+        )
+        for info in result.values():
+            assert info["macd_cross"] != "bullish"

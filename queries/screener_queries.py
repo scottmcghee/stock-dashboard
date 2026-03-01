@@ -84,6 +84,42 @@ def fetch_signal_scan_symbols(scan_names: list[str]) -> set[str]:
     return result_sets[0].intersection(*result_sets[1:])
 
 
+def fetch_option_metrics_for_tickers(tickers: list[str]) -> pd.DataFrame:
+    """Fetch latest option metrics for a list of tickers.
+
+    Returns DataFrame with columns: symbol, option_volume, option_volume_avg,
+    vol_multiple, put_call_ratio, gxoi, dxoi, vannaxoi, flownet.
+    """
+    if not tickers:
+        return pd.DataFrame()
+    with option_connection() as conn:
+        placeholders = ",".join(["%s"] * len(tickers))
+        query = f"""
+        WITH latest AS (
+            SELECT MAX(collection_date) as max_date FROM underlying_data
+        )
+        SELECT
+            u.symbol,
+            u.option_volume,
+            a.option_volume_avg,
+            CASE WHEN a.option_volume_avg > 0
+                 THEN u.option_volume::float / a.option_volume_avg
+                 ELSE NULL END AS vol_multiple,
+            u.put_call_ratio,
+            u.gxoi,
+            u.dxoi,
+            u.vannaxoi,
+            u.flownet
+        FROM underlying_data u
+        JOIN underlying_data_avg a
+            ON u.symbol = a.symbol AND a.date = (SELECT MAX(date) FROM underlying_data_avg)
+        JOIN latest l ON u.collection_date = l.max_date
+        WHERE u.symbol IN ({placeholders})
+        """
+        df = pd.read_sql_query(query, conn, params=tickers)
+    return df
+
+
 def fetch_bulk_ohlcv_for_ta(
     tickers: list[str], lookback_days: int = 300
 ) -> pd.DataFrame:

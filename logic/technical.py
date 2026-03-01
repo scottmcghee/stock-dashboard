@@ -337,8 +337,12 @@ def apply_ta_filters(
         # MACD crossover filter
         cross = detect_macd_crossover(close)
         info["macd_cross"] = cross
-        if macd_crossover is not None and cross != macd_crossover:
-            continue
+        if macd_crossover is not None:
+            if macd_crossover.startswith("not "):
+                if cross == macd_crossover[4:]:
+                    continue
+            elif cross != macd_crossover:
+                continue
 
         # MA touch filter
         if ma_touch_period is not None:

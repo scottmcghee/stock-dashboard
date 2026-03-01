@@ -150,8 +150,8 @@ with st.form(_form_key):
             ta_timeframe = st.selectbox("TA Timeframe", ["D", "W", "M"], format_func=lambda x: {"D": "Daily", "W": "Weekly", "M": "Monthly"}[x])
             macd_crossover = st.selectbox(
                 "MACD Crossover",
-                [None, "bullish", "bearish"],
-                format_func=lambda x: "Any" if x is None else x.title(),
+                [None, "bullish", "bearish", "not bullish", "not bearish"],
+                format_func=lambda x: "Any" if x is None else x.replace("not ", "Not ").title(),
             )
             adr_min = st.number_input(
                 "ADR% Min", min_value=0, max_value=100, value=preset.get("adr_min"), step=1,
@@ -280,6 +280,17 @@ if results.empty:
     st.warning("No stocks found after applying technical filters.")
     st.stop()
 
+# --- Fetch option metrics for surviving tickers ---
+option_metrics: dict[str, dict] = {}
+surviving_tickers_for_opts = results["ticker"].unique().tolist()
+if surviving_tickers_for_opts:
+    from queries.screener_queries import fetch_option_metrics_for_tickers
+
+    opt_df = fetch_option_metrics_for_tickers(surviving_tickers_for_opts)
+    if not opt_df.empty:
+        for _, row in opt_df.iterrows():
+            option_metrics[row["symbol"]] = row.to_dict()
+
 # --- Phase 4: Pattern scanning (only on survivors) ---
 pattern_info: dict[str, list[dict]] = {}
 if pattern_scans:
@@ -352,6 +363,30 @@ if ta_active and ta_info:
             f"{ta_info.get(t, {}).get('ratio_to_ma', None):.3f}" if ta_info.get(t, {}).get("ratio_to_ma") is not None else "N/A"
             for t in tickers
         ]
+
+# Add option metric columns when available
+if option_metrics:
+    tickers = display_df["Ticker"].tolist()
+    _opt_cols = [
+        ("vol_multiple", "Opt Vol (x)", lambda v: f"{v:.1f}x"),
+        ("put_call_ratio", "P/C Ratio", lambda v: f"{v:.2f}"),
+        ("gxoi", "GEX", lambda v: f"{v:,.0f}"),
+        ("dxoi", "dxOI", lambda v: f"{v:,.0f}"),
+        ("vannaxoi", "Vanna", lambda v: f"{v:,.0f}"),
+        ("flownet", "Flow", lambda v: f"{v:,.0f}"),
+    ]
+    for key, label, fmt in _opt_cols:
+        if any(
+            option_metrics.get(t, {}).get(key) is not None
+            and pd.notnull(option_metrics.get(t, {}).get(key))
+            for t in tickers
+        ):
+            display_df[label] = [
+                fmt(option_metrics[t][key])
+                if t in option_metrics and option_metrics[t].get(key) is not None and pd.notnull(option_metrics[t][key])
+                else "N/A"
+                for t in tickers
+            ]
 
 # Add pattern columns when active
 if pattern_info:

@@ -106,6 +106,40 @@ class TestFetchBulkEtfOhlcvForTa:
         assert result.empty
 
 
+class TestFetchOptionMetricsForTickers:
+    def test_returns_expected_columns(self, mock_option_pool):
+        mock_df = pd.DataFrame({
+            "symbol": ["AAPL", "TSLA"],
+            "option_volume": [50000, 80000],
+            "option_volume_avg": [20000, 40000],
+            "vol_multiple": [2.5, 2.0],
+            "put_call_ratio": [0.85, 1.2],
+            "gxoi": [100000, -50000],
+            "dxoi": [5000, -3000],
+            "vannaxoi": [20000, -10000],
+            "flownet": [15000, -8000],
+        })
+        with patch("pandas.read_sql_query", return_value=mock_df):
+            from queries.screener_queries import fetch_option_metrics_for_tickers
+            result = fetch_option_metrics_for_tickers(["AAPL", "TSLA"])
+            assert len(result) == 2
+            expected_cols = {"symbol", "option_volume", "option_volume_avg",
+                             "vol_multiple", "put_call_ratio", "gxoi", "dxoi",
+                             "vannaxoi", "flownet"}
+            assert expected_cols.issubset(set(result.columns))
+
+    def test_empty_tickers(self):
+        from queries.screener_queries import fetch_option_metrics_for_tickers
+        result = fetch_option_metrics_for_tickers([])
+        assert result.empty
+
+    def test_empty_result(self, mock_option_pool):
+        with patch("pandas.read_sql_query", return_value=pd.DataFrame()):
+            from queries.screener_queries import fetch_option_metrics_for_tickers
+            result = fetch_option_metrics_for_tickers(["FAKE"])
+            assert result.empty
+
+
 class TestSearchStocksRestrictTickers:
     """Test the restrict_tickers parameter added to search_stocks_by_metrics."""
 
