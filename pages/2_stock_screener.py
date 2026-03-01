@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from config import CACHE_TTL_LONG, CACHE_TTL_SHORT
+from logic.preset import list_presets, parse_preset, PRESET_DIR
 from queries.stocks_queries import get_all_etfs, search_stocks_by_metrics
 
 st.header("Stock Screener")
@@ -27,9 +28,38 @@ SIGNAL_SCAN_OPTIONS = [
 
 MA_PERIOD_OPTIONS = [None, 5, 8, 10, 20, 21, 50, 100, 200]
 
+# Preset selector UI
+preset: dict = st.session_state.get("_preset", {})
+_preset_names = list_presets()
+
+if _preset_names:
+    _selected = st.selectbox(
+        "Load Backtester Preset",
+        ["(none)"] + _preset_names,
+        format_func=lambda x: x.replace("_", " "),
+        key="_preset_select",
+    )
+    if _selected != "(none)" and _selected != preset.get("_stem"):
+        preset = parse_preset(_selected)
+        st.session_state["_preset"] = preset
+        st.session_state["_screener_reset"] = st.session_state.get("_screener_reset", 0) + 1
+        st.rerun()
+    elif _selected == "(none)" and preset:
+        st.session_state.pop("_preset", None)
+        preset = {}
+        st.session_state["_screener_reset"] = st.session_state.get("_screener_reset", 0) + 1
+        st.rerun()
+
+    if preset.get("_regime"):
+        st.caption(f"Backtest regime: **{preset['_regime'].title()}**")
+    if preset.get("_unmapped"):
+        st.info(f"Unmapped filters (not in screener): {', '.join(preset['_unmapped'])}")
+
 # --- Reset Button ---
 if st.button("Reset Filters"):
     st.session_state["_screener_reset"] = st.session_state.get("_screener_reset", 0) + 1
+    st.session_state.pop("_preset", None)
+    st.session_state.pop("_preset_select", None)
     st.rerun()
 
 _form_key = f"screener_form_{st.session_state.get('_screener_reset', 0)}"
@@ -43,16 +73,20 @@ with st.form(_form_key):
         rs_rank_min = st.number_input("RS Rank Min (%)", min_value=0.0, max_value=100.0, value=None, step=1.0, format="%.1f")
         rs_rank_max = st.number_input("RS Rank Max (%)", min_value=0.0, max_value=100.0, value=None, step=1.0, format="%.1f")
     with col2:
-        rs_rank_overall_min = st.number_input("RS Rank Overall Min (%)", min_value=0.0, max_value=100.0, value=None, step=1.0, format="%.1f")
-        rs_rank_overall_max = st.number_input("RS Rank Overall Max (%)", min_value=0.0, max_value=100.0, value=None, step=1.0, format="%.1f")
-        rs_z_score_min = st.number_input("RS Z-Score Min", value=None, step=0.1, format="%.2f")
-        rs_z_score_max = st.number_input("RS Z-Score Max", value=None, step=0.1, format="%.2f")
+        rs_rank_overall_min = st.number_input("RS Rank Overall Min (%)", min_value=0.0, max_value=100.0, value=preset.get("rs_rank_overall_min"), step=1.0, format="%.1f")
+        rs_rank_overall_max = st.number_input("RS Rank Overall Max (%)", min_value=0.0, max_value=100.0, value=preset.get("rs_rank_overall_max"), step=1.0, format="%.1f")
+        rs_z_score_min = st.number_input("RS Z-Score Min", value=preset.get("rs_z_score_min"), step=0.1, format="%.2f")
+        rs_z_score_max = st.number_input("RS Z-Score Max", value=preset.get("rs_z_score_max"), step=0.1, format="%.2f")
     with col3:
-        volume_std_dev_min = st.number_input("Volume Z-Score Min", value=None, step=0.1, format="%.1f")
+        volume_std_dev_min = st.number_input("Volume Z-Score Min", value=preset.get("volume_std_dev_min"), step=0.1, format="%.1f")
         avg_volume_min = st.number_input("Avg 30-Day Volume Min", value=None, step=10000.0, format="%.0f")
+        _stages = [None, "Stage 1", "Stage 2", "Stage 3", "Stage 4"]
+        _stage_val = preset.get("weinstein_stage")
+        _stage_idx = _stages.index(_stage_val) if _stage_val in _stages else 0
         weinstein_stage = st.selectbox(
             "Weinstein Stage",
-            [None, "Stage 1", "Stage 2", "Stage 3", "Stage 4"],
+            _stages,
+            index=_stage_idx,
             format_func=lambda x: "All Stages" if x is None else x,
         )
 
@@ -75,9 +109,39 @@ with st.form(_form_key):
                 options=SIGNAL_SCAN_OPTIONS,
                 help="Stocks must appear in ALL selected scans",
             )
+            _mom_periods = [20, 63, 126]
+            _mom_default = preset.get("momentum_period", 63)
+            _mom_idx = _mom_periods.index(_mom_default) if _mom_default in _mom_periods else 1
+            momentum_period = st.selectbox(
+                "Momentum Period", _mom_periods, index=_mom_idx,
+                format_func=lambda x: f"{x}-day",
+            )
+            momentum_min = st.number_input(
+                "Momentum Min (%)", value=preset.get("momentum_min"), step=5.0, format="%.1f",
+                help="Minimum rate-of-change over the momentum period",
+            )
+            momentum_max = st.number_input(
+                "Momentum Max (%)", value=preset.get("momentum_max"), step=5.0, format="%.1f",
+                help="Maximum rate-of-change over the momentum period",
+            )
+            _ratio_periods = [50, 200]
+            _ratio_default = preset.get("ratio_to_ma_period", 200)
+            _ratio_idx = _ratio_periods.index(_ratio_default) if _ratio_default in _ratio_periods else 1
+            ratio_to_ma_period = st.selectbox(
+                "Ratio to MA Period", _ratio_periods, index=_ratio_idx,
+                format_func=lambda x: f"{x}-day SMA",
+            )
+            ratio_to_ma_min = st.number_input(
+                "Ratio to MA Min", value=preset.get("ratio_to_ma_min"), step=0.05, format="%.3f",
+                help="Minimum close / SMA ratio (e.g. 1.0 = at the MA)",
+            )
+            ratio_to_ma_max = st.number_input(
+                "Ratio to MA Max", value=preset.get("ratio_to_ma_max"), step=0.05, format="%.3f",
+                help="Maximum close / SMA ratio",
+            )
         with adv2:
-            rsi_min = st.number_input("RSI Min", min_value=0, max_value=100, value=None, step=5)
-            rsi_max = st.number_input("RSI Max", min_value=0, max_value=100, value=None, step=5)
+            rsi_min = st.number_input("RSI Min", min_value=0, max_value=100, value=preset.get("rsi_min"), step=5)
+            rsi_max = st.number_input("RSI Max", min_value=0, max_value=100, value=preset.get("rsi_max"), step=5)
             ma_touch_period = st.selectbox(
                 "Price Touching MA",
                 MA_PERIOD_OPTIONS,
@@ -90,7 +154,7 @@ with st.form(_form_key):
                 format_func=lambda x: "Any" if x is None else x.title(),
             )
             adr_min = st.number_input(
-                "ADR% Min", min_value=0, max_value=100, value=None, step=1,
+                "ADR% Min", min_value=0, max_value=100, value=preset.get("adr_min"), step=1,
                 help="Minimum average daily range as % of close (14-day)",
             )
             gap_type = st.selectbox(
@@ -110,6 +174,7 @@ with st.form(_form_key):
         pattern_scans = st.multiselect(
             "Chart Patterns",
             options=["high_tight_flag", "bull_flag", "bear_flag", "cup_and_handle", "v_bottom"],
+            default=preset.get("pattern_scans", []),
             format_func=lambda x: x.replace("_", " ").title(),
             help="Only show stocks matching at least one selected pattern",
         )
@@ -174,6 +239,10 @@ ta_active = (
     or ma_touch_period is not None
     or adr_min is not None
     or gap_type is not None
+    or momentum_min is not None
+    or momentum_max is not None
+    or ratio_to_ma_min is not None
+    or ratio_to_ma_max is not None
 )
 ta_info: dict[str, dict] = {}
 
@@ -197,6 +266,12 @@ if ta_active:
                 gap_type=gap_type,
                 gap_min_pct=float(gap_min_pct),
                 gap_lookback=int(gap_lookback),
+                momentum_min=float(momentum_min) if momentum_min is not None else None,
+                momentum_max=float(momentum_max) if momentum_max is not None else None,
+                momentum_period=int(momentum_period),
+                ratio_to_ma_min=float(ratio_to_ma_min) if ratio_to_ma_min is not None else None,
+                ratio_to_ma_max=float(ratio_to_ma_max) if ratio_to_ma_max is not None else None,
+                ratio_to_ma_period=int(ratio_to_ma_period),
                 timeframe=ta_timeframe,
             )
             results = results[results["ticker"].isin(ta_info.keys())]
@@ -265,6 +340,16 @@ if ta_active and ta_info:
         display_df["Gap"] = [
             f"{ta_info.get(t, {}).get('gap', {}).get('type', '').title()} {ta_info.get(t, {}).get('gap', {}).get('gap_pct', '')}%"
             if ta_info.get(t, {}).get("gap") is not None else "N/A"
+            for t in tickers
+        ]
+    if any(info.get("momentum") is not None for info in ta_info.values()):
+        display_df["Momentum%"] = [
+            f"{ta_info.get(t, {}).get('momentum', None):.1f}%" if ta_info.get(t, {}).get("momentum") is not None else "N/A"
+            for t in tickers
+        ]
+    if any(info.get("ratio_to_ma") is not None for info in ta_info.values()):
+        display_df["Ratio-MA"] = [
+            f"{ta_info.get(t, {}).get('ratio_to_ma', None):.3f}" if ta_info.get(t, {}).get("ratio_to_ma") is not None else "N/A"
             for t in tickers
         ]
 

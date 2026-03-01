@@ -265,6 +265,12 @@ def apply_ta_filters(
     gap_type: str | None = None,
     gap_min_pct: float = 0.0,
     gap_lookback: int = 5,
+    momentum_min: float | None = None,
+    momentum_max: float | None = None,
+    momentum_period: int = 63,
+    ratio_to_ma_min: float | None = None,
+    ratio_to_ma_max: float | None = None,
+    ratio_to_ma_period: int = 200,
     timeframe: str = "D",
 ) -> dict[str, dict]:
     """Apply TA filters to bulk OHLCV data, return passing tickers with indicator values.
@@ -279,11 +285,15 @@ def apply_ta_filters(
         gap_type: 'bull', 'bear', or 'any' to require a recent gap.
         gap_min_pct: Minimum gap size as % of previous close.
         gap_lookback: Number of bars to search for a gap.
+        momentum_min/momentum_max: Rate-of-change filter (%).
+        momentum_period: Lookback for momentum (default 63).
+        ratio_to_ma_min/ratio_to_ma_max: Close/SMA ratio filter.
+        ratio_to_ma_period: SMA period for ratio (default 200).
         timeframe: 'D', 'W', or 'M' for resampling.
 
     Returns:
         Dict of ticker -> {'rsi': float, 'macd_cross': str|None, 'ma_touch': bool, 'adr': float,
-                           'gap': dict|None}
+                           'gap': dict|None, 'momentum': float|None, 'ratio_to_ma': float|None}
         for tickers that pass all active filters.
     """
     no_filters = (
@@ -293,6 +303,10 @@ def apply_ta_filters(
         and ma_touch_period is None
         and adr_min is None
         and gap_type is None
+        and momentum_min is None
+        and momentum_max is None
+        and ratio_to_ma_min is None
+        and ratio_to_ma_max is None
     )
     if no_filters:
         return {t: {} for t in tickers}
@@ -339,6 +353,22 @@ def apply_ta_filters(
         adr_val = compute_adr(ticker_data["high"], ticker_data["low"], close)
         info["adr"] = adr_val
         if adr_min is not None and (adr_val is None or adr_val < adr_min):
+            continue
+
+        # Momentum filter
+        mom_val = compute_momentum(close, momentum_period)
+        info["momentum"] = mom_val
+        if momentum_min is not None and (mom_val is None or mom_val < momentum_min):
+            continue
+        if momentum_max is not None and (mom_val is None or mom_val > momentum_max):
+            continue
+
+        # Ratio-to-MA filter
+        ratio_val = compute_ratio_to_ma(close, ratio_to_ma_period)
+        info["ratio_to_ma"] = ratio_val
+        if ratio_to_ma_min is not None and (ratio_val is None or ratio_val < ratio_to_ma_min):
+            continue
+        if ratio_to_ma_max is not None and (ratio_val is None or ratio_val > ratio_to_ma_max):
             continue
 
         # Gap filter

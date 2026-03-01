@@ -455,3 +455,68 @@ class TestApplyTaFilters:
         # All results should have 'gap' key
         for info in result.values():
             assert "gap" in info
+
+    def test_momentum_min_filter(self, bulk_ohlcv):
+        result = apply_ta_filters(
+            bulk_ohlcv, ["AAPL", "MSFT", "GOOGL"],
+            momentum_min=0.0, momentum_period=63,
+        )
+        for info in result.values():
+            assert "momentum" in info
+            assert info["momentum"] >= 0.0
+
+    def test_momentum_max_filter(self, bulk_ohlcv):
+        result = apply_ta_filters(
+            bulk_ohlcv, ["AAPL", "MSFT", "GOOGL"],
+            momentum_max=0.0, momentum_period=63,
+        )
+        for info in result.values():
+            assert info["momentum"] <= 0.0
+
+    def test_momentum_period(self, bulk_ohlcv):
+        # Different periods should potentially give different results
+        result_20 = apply_ta_filters(
+            bulk_ohlcv, ["AAPL"], momentum_min=-999.0, momentum_period=20,
+        )
+        result_126 = apply_ta_filters(
+            bulk_ohlcv, ["AAPL"], momentum_min=-999.0, momentum_period=126,
+        )
+        # Both should pass (very loose filter), but values may differ
+        assert "AAPL" in result_20
+        assert "AAPL" in result_126
+        assert result_20["AAPL"]["momentum"] != result_126["AAPL"]["momentum"]
+
+    def test_ratio_to_ma_min_filter(self, bulk_ohlcv):
+        result = apply_ta_filters(
+            bulk_ohlcv, ["AAPL", "MSFT", "GOOGL"],
+            ratio_to_ma_min=0.5, ratio_to_ma_period=50,
+        )
+        for info in result.values():
+            assert "ratio_to_ma" in info
+            assert info["ratio_to_ma"] >= 0.5
+
+    def test_ratio_to_ma_max_filter(self, bulk_ohlcv):
+        result = apply_ta_filters(
+            bulk_ohlcv, ["AAPL", "MSFT", "GOOGL"],
+            ratio_to_ma_max=2.0, ratio_to_ma_period=50,
+        )
+        for info in result.values():
+            assert info["ratio_to_ma"] <= 2.0
+
+    def test_ratio_to_ma_period(self, bulk_ohlcv):
+        result_50 = apply_ta_filters(
+            bulk_ohlcv, ["AAPL"], ratio_to_ma_min=0.0, ratio_to_ma_period=50,
+        )
+        result_200 = apply_ta_filters(
+            bulk_ohlcv, ["AAPL"], ratio_to_ma_min=0.0, ratio_to_ma_period=200,
+        )
+        # Period 50 should have a value; period 200 might be None (only 200 bars)
+        assert "AAPL" in result_50
+        assert result_50["AAPL"]["ratio_to_ma"] is not None
+
+    def test_no_filters_includes_new_params(self, bulk_ohlcv):
+        """When no filters are set (all None), all tickers pass with empty dicts."""
+        result = apply_ta_filters(bulk_ohlcv, ["AAPL", "MSFT", "GOOGL"])
+        assert set(result.keys()) == {"AAPL", "MSFT", "GOOGL"}
+        for info in result.values():
+            assert info == {}

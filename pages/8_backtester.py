@@ -29,6 +29,7 @@ from queries.backtest_queries import (
     load_ohlcv_universe,
     load_spy_ohlcv,
 )
+from logic.preset import PRESET_DIR
 from queries.stocks_queries import get_all_etfs
 
 st.header("Screener Backtester")
@@ -36,8 +37,6 @@ st.caption(
     "Replay screener filter combinations over historical data. "
     "Measures forward returns (T+5 to T+63) and tests statistical significance."
 )
-
-PRESET_DIR = Path("~/.config/stock_dashboard/presets").expanduser()
 
 
 @st.cache_data(ttl=CACHE_TTL_SHORT)

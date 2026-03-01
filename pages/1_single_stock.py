@@ -8,6 +8,8 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from config import CACHE_TTL_DEFAULT, CACHE_TTL_SHORT
+from logic.preset import list_presets, parse_preset
+from logic.preset_signal import compute_preset_signal_mask, determine_signal_direction
 from logic.chart_helpers import (
     compute_rs_moving_averages,
     get_non_trading_days,
@@ -52,6 +54,17 @@ with col4:
     end_date = st.date_input("End Date", value=datetime.now().date())
 
 interval = st.radio("Interval", ["D", "W", "M"], horizontal=True, index=0)
+
+_preset_names = list_presets()
+_preset_selected = None
+if _preset_names:
+    _preset_selected = st.selectbox(
+        "Signal Overlay (Backtester Preset)",
+        ["(none)"] + _preset_names,
+        format_func=lambda x: x.replace("_", " "),
+    )
+    if _preset_selected == "(none)":
+        _preset_selected = None
 
 if not ticker:
     st.info("Select a stock ticker to view charts.")
@@ -108,6 +121,45 @@ fig1.add_trace(
 )
 
 non_trading = get_non_trading_days(stock_data["date"])
+
+# --- Preset signal overlay ---
+if _preset_selected:
+    _parsed = parse_preset(_preset_selected)
+    _raw_filters = _parsed.get("_raw_filters", [])
+    if _raw_filters:
+        _signal_mask = compute_preset_signal_mask(stock_data, metrics_data, _raw_filters)
+        _signal_dates = stock_data[_signal_mask]
+        _direction = determine_signal_direction(_parsed.get("_stats", {}))
+        if not _signal_dates.empty:
+            if _direction == "bullish":
+                fig1.add_trace(
+                    go.Scatter(
+                        x=_signal_dates["date"],
+                        y=_signal_dates["low"] * 0.995,
+                        mode="markers",
+                        marker=dict(symbol="triangle-up", size=10, color="green"),
+                        name=f"Signal: {_preset_selected.replace('_', ' ')}",
+                        showlegend=True,
+                    ),
+                    row=1, col=1,
+                )
+            else:
+                fig1.add_trace(
+                    go.Scatter(
+                        x=_signal_dates["date"],
+                        y=_signal_dates["high"] * 1.005,
+                        mode="markers",
+                        marker=dict(symbol="triangle-down", size=10, color="red"),
+                        name=f"Signal: {_preset_selected.replace('_', ' ')}",
+                        showlegend=True,
+                    ),
+                    row=1, col=1,
+                )
+            st.caption(
+                f"{len(_signal_dates)} {_direction} signals from preset "
+                f"**{_preset_selected.replace('_', ' ')}**"
+            )
+
 fig1.update_layout(
     title=f"{ticker} Price and Volume",
     xaxis_rangeslider_visible=False,
