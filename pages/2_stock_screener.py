@@ -280,16 +280,32 @@ if results.empty:
     st.warning("No stocks found after applying technical filters.")
     st.stop()
 
-# --- Fetch option metrics for surviving tickers ---
+# --- Fetch option metrics + signal labels for surviving tickers ---
 option_metrics: dict[str, dict] = {}
+signal_labels: dict[str, dict[str, str]] = {}  # ticker -> {scan_name: label}
 surviving_tickers_for_opts = results["ticker"].unique().tolist()
 if surviving_tickers_for_opts:
     from queries.screener_queries import fetch_option_metrics_for_tickers
+    from queries.signal_queries import scan_gex_level, scan_vanna_extreme, scan_flownet_extreme
 
     opt_df = fetch_option_metrics_for_tickers(surviving_tickers_for_opts)
     if not opt_df.empty:
         for _, row in opt_df.iterrows():
             option_metrics[row["symbol"]] = row.to_dict()
+
+    # Build signal label maps from scan results
+    _survivor_set = set(surviving_tickers_for_opts)
+    for scan_fn, col_name in [
+        (scan_gex_level, "gex"),
+        (scan_vanna_extreme, "vanna"),
+        (scan_flownet_extreme, "flow"),
+    ]:
+        scan_df = scan_fn()
+        if not scan_df.empty:
+            for _, row in scan_df.iterrows():
+                sym = row["symbol"]
+                if sym in _survivor_set:
+                    signal_labels.setdefault(sym, {})[col_name] = row["signal_label"]
 
 # --- Phase 4: Pattern scanning (only on survivors) ---
 pattern_info: dict[str, list[dict]] = {}
@@ -365,15 +381,13 @@ if ta_active and ta_info:
         ]
 
 # Add option metric columns when available
-if option_metrics:
+if option_metrics or signal_labels:
     tickers = display_df["Ticker"].tolist()
+    # Numeric option columns
     _opt_cols = [
         ("vol_multiple", "Opt Vol (x)", lambda v: f"{v:.1f}x"),
         ("put_call_ratio", "P/C Ratio", lambda v: f"{v:.2f}"),
-        ("gxoi", "GEX", lambda v: f"{v:,.0f}"),
         ("dxoi", "dxOI", lambda v: f"{v:,.0f}"),
-        ("vannaxoi", "Vanna", lambda v: f"{v:,.0f}"),
-        ("flownet", "Flow", lambda v: f"{v:,.0f}"),
     ]
     for key, label, fmt in _opt_cols:
         if any(
@@ -385,6 +399,13 @@ if option_metrics:
                 fmt(option_metrics[t][key])
                 if t in option_metrics and option_metrics[t].get(key) is not None and pd.notnull(option_metrics[t][key])
                 else "N/A"
+                for t in tickers
+            ]
+    # Signal label columns
+    for scan_key, col_label in [("gex", "GEX"), ("vanna", "Vanna"), ("flow", "Flow")]:
+        if any(signal_labels.get(t, {}).get(scan_key) for t in tickers):
+            display_df[col_label] = [
+                signal_labels.get(t, {}).get(scan_key, "—")
                 for t in tickers
             ]
 
