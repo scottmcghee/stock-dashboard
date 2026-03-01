@@ -214,10 +214,10 @@ if restrict_sets:
 # --- Phase 2: SQL query (existing search + restrict_tickers) ---
 with st.spinner("Searching..."):
     results = search_stocks_by_metrics(
-        rs_rank_min=rs_rank_min,
-        rs_rank_max=rs_rank_max,
-        rs_rank_overall_min=rs_rank_overall_min,
-        rs_rank_overall_max=rs_rank_overall_max,
+        rs_rank_min=rs_rank_min / 100.0 if rs_rank_min is not None else None,
+        rs_rank_max=rs_rank_max / 100.0 if rs_rank_max is not None else None,
+        rs_rank_overall_min=rs_rank_overall_min / 100.0 if rs_rank_overall_min is not None else None,
+        rs_rank_overall_max=rs_rank_overall_max / 100.0 if rs_rank_overall_max is not None else None,
         rs_z_score_min=rs_z_score_min,
         rs_z_score_max=rs_z_score_max,
         volume_std_dev_min=volume_std_dev_min,
