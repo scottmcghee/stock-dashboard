@@ -68,13 +68,13 @@ def _compute_indicators(
 
     if "volume_z" in needed:
         vol = ohlcv["volume"].astype(float)
-        rolling_mean = vol.rolling(30, min_periods=1).mean()
-        rolling_std = vol.rolling(30, min_periods=1).std()
+        rolling_mean = vol.rolling(30, min_periods=30).mean()
+        rolling_std = vol.rolling(30, min_periods=30).std()
         result["volume_z"] = ((vol - rolling_mean) / rolling_std.replace(0, np.nan)).values
 
     if "adr_14" in needed:
         daily_range_pct = (ohlcv["high"] - ohlcv["low"]) / close * 100
-        result["adr_14"] = daily_range_pct.rolling(14, min_periods=1).mean().values
+        result["adr_14"] = daily_range_pct.rolling(14, min_periods=14).mean().values
 
     if "weinstein_stage" in needed:
         from logic.weinstein import calculate_weinstein_stages
