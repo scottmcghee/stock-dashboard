@@ -129,6 +129,73 @@ class TestFetchEtfMetrics:
             assert len(result) == 1
 
 
+class TestFetchAllEtfRankHistory:
+    def test_returns_all_etfs(self, mock_stocks_pool):
+        mock_df = pd.DataFrame({
+            "date": pd.to_datetime(["2025-01-01", "2025-01-02"] * 2),
+            "etf_ticker": ["XLK", "XLK", "XLF", "XLF"],
+            "rs_rank_index": [0.8, 0.82, 0.5, 0.48],
+        })
+        with patch("pandas.read_sql_query", return_value=mock_df):
+            from queries.stocks_queries import fetch_all_etf_rank_history
+            result = fetch_all_etf_rank_history("2025-01-01", "2025-01-02")
+            assert set(result["etf_ticker"].unique()) == {"XLK", "XLF"}
+            assert pd.api.types.is_datetime64_any_dtype(result["date"])
+
+    def test_empty_result(self, mock_stocks_pool):
+        with patch("pandas.read_sql_query", return_value=pd.DataFrame()):
+            from queries.stocks_queries import fetch_all_etf_rank_history
+            result = fetch_all_etf_rank_history("2025-01-01", "2025-01-02")
+            assert result.empty
+
+    def test_no_date_range(self, mock_stocks_pool):
+        mock_df = pd.DataFrame({
+            "date": pd.to_datetime(["2025-01-01"]),
+            "etf_ticker": ["XLK"],
+            "rs_rank_index": [0.8],
+        })
+        with patch("pandas.read_sql_query", return_value=mock_df) as mock_read:
+            from queries.stocks_queries import fetch_all_etf_rank_history
+            fetch_all_etf_rank_history()
+            call_sql = mock_read.call_args[0][0]
+            assert "BETWEEN" not in call_sql
+
+
+class TestFetch52wData:
+    def test_returns_typed_dataframe(self, mock_stocks_pool):
+        mock_df = pd.DataFrame({
+            "date": pd.to_datetime(["2025-01-01", "2025-01-02"]),
+            "ticker": ["AAPL", "AAPL"],
+            "high": [150.0, 155.0],
+            "low": [145.0, 148.0],
+        })
+        with patch("pandas.read_sql_query", return_value=mock_df):
+            from queries.stocks_queries import fetch_52w_data
+            result = fetch_52w_data("2025-01-01")
+            assert pd.api.types.is_datetime64_any_dtype(result["date"])
+            assert result["high"].dtype == float
+
+    def test_empty_result(self, mock_stocks_pool):
+        with patch("pandas.read_sql_query", return_value=pd.DataFrame()):
+            from queries.stocks_queries import fetch_52w_data
+            result = fetch_52w_data("2025-01-01")
+            assert result.empty
+
+
+class TestFetch52wEtfData:
+    def test_returns_etf_data(self, mock_stocks_pool):
+        mock_df = pd.DataFrame({
+            "date": pd.to_datetime(["2025-01-01"]),
+            "ticker": ["XLK"],
+            "high": [200.0],
+            "low": [195.0],
+        })
+        with patch("pandas.read_sql_query", return_value=mock_df):
+            from queries.stocks_queries import fetch_52w_etf_data
+            result = fetch_52w_etf_data("2025-01-01")
+            assert len(result) == 1
+
+
 class TestFetchExchangeMap:
     def test_returns_exchange_codes(self, mock_stocks_pool):
         mock_df = pd.DataFrame({

@@ -143,6 +143,63 @@ def fetch_etf_ohlcv(
         return df
 
 
+def fetch_all_etf_rank_history(
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    """Fetch rs_rank_index history for all ETFs."""
+    with stocks_connection() as conn:
+        query = """
+        SELECT date, etf_ticker, rs_rank_index
+        FROM fact_etf_metrics
+        WHERE 1=1
+        """
+        params: list = []
+        if start_date and end_date:
+            query += " AND date BETWEEN %s AND %s"
+            params.extend([start_date, end_date])
+        query += " ORDER BY etf_ticker, date"
+        df = pd.read_sql_query(query, conn, params=params or None)
+        if not df.empty:
+            df["date"] = pd.to_datetime(df["date"])
+        return df
+
+
+def fetch_52w_data(start_date: str) -> pd.DataFrame:
+    """Fetch date/ticker/high/low for 52W high/low computation.
+
+    start_date should include lookback (display_start - 370 days).
+    """
+    with stocks_connection() as conn:
+        query = """
+        SELECT date, ticker, high, low
+        FROM fact_commons_ohlc
+        WHERE date >= %s
+        """
+        df = pd.read_sql_query(query, conn, params=[start_date])
+        if not df.empty:
+            df["date"] = pd.to_datetime(df["date"])
+            df["high"] = df["high"].astype(float)
+            df["low"] = df["low"].astype(float)
+        return df
+
+
+def fetch_52w_etf_data(start_date: str) -> pd.DataFrame:
+    """Fetch date/ticker/high/low for ETFs (fact_index_ohlc)."""
+    with stocks_connection() as conn:
+        query = """
+        SELECT date, ticker, high, low
+        FROM fact_index_ohlc
+        WHERE date >= %s
+        """
+        df = pd.read_sql_query(query, conn, params=[start_date])
+        if not df.empty:
+            df["date"] = pd.to_datetime(df["date"])
+            df["high"] = df["high"].astype(float)
+            df["low"] = df["low"].astype(float)
+        return df
+
+
 def fetch_exchange_map(tickers: list[str]) -> dict[str, str | None]:
     """Lookup exchange codes from dim_stock for a list of tickers."""
     if not tickers:

@@ -291,6 +291,10 @@ FILTER_TO_COLUMN = {
     "has_high_tight_flag": "has_high_tight_flag",
     "has_cup_and_handle": "has_cup_and_handle",
     "has_v_bottom": "has_v_bottom",
+    "rs_impulse_10_min": "rs_impulse_10",
+    "rs_impulse_10_max": "rs_impulse_10",
+    "rs_impulse_20_min": "rs_impulse_20",
+    "rs_impulse_20_max": "rs_impulse_20",
 }
 
 HORIZON_COLUMNS = ["fwd_5", "fwd_10", "fwd_20", "fwd_63"]
@@ -445,6 +449,10 @@ FILTER_RANGES: dict[str, list] = {
     "has_high_tight_flag": [True],
     "has_cup_and_handle": [True],
     "has_v_bottom": [True],
+    "rs_impulse_10_min": [0.05, 0.10, 0.15],
+    "rs_impulse_10_max": [-0.05, -0.10, -0.15],
+    "rs_impulse_20_min": [0.05, 0.10, 0.15],
+    "rs_impulse_20_max": [-0.05, -0.10, -0.15],
 }
 
 REGIMES: list[str | None] = [None, "bull", "bear", "volatile", "correction"]
@@ -453,6 +461,8 @@ REGIMES: list[str | None] = [None, "bull", "bear", "volatile", "correction"]
 _CONFLICTS = [
     {"rsi_min", "rsi_max"},
     {"ratio_to_200ma_min", "ratio_to_200ma_max"},
+    {"rs_impulse_10_min", "rs_impulse_10_max"},
+    {"rs_impulse_20_min", "rs_impulse_20_max"},
 ]
 
 
@@ -511,6 +521,30 @@ def generate_strategies(max_filters: int = 3) -> list[Strategy]:
 # ---------------------------------------------------------------------------
 
 
+def compute_rs_impulse(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute RS rank change over multiple lookback windows.
+
+    For each ticker, computes the difference in rs_rank_overall over
+    5, 10, 20, and 42 trading days. Positive = rising through ranks.
+    """
+    impulse_cols = {5: "rs_impulse_5", 10: "rs_impulse_10",
+                    20: "rs_impulse_20", 42: "rs_impulse_42"}
+
+    for col_name in impulse_cols.values():
+        df[col_name] = np.nan
+
+    for _, group in df.groupby("ticker"):
+        idx = group.sort_values("date").index
+        rs = df.loc[idx, "rs_rank_overall"]
+        for window, col_name in impulse_cols.items():
+            df.loc[idx, col_name] = (rs - rs.shift(window)).values
+
+    for col_name in impulse_cols.values():
+        df[col_name] = df[col_name].astype(np.float32)
+
+    return df
+
+
 def build_backtest_dataframe(
     ohlcv: pd.DataFrame,
     metrics: pd.DataFrame | None = None,
@@ -530,5 +564,9 @@ def build_backtest_dataframe(
         metric_cols = [c for c in ["date", "ticker", "rs_rank_overall", "rs_z_score"]
                        if c in metrics.columns]
         df = df.merge(metrics[metric_cols], on=["date", "ticker"], how="left")
+
+    # Compute RS impulse if rs_rank_overall is available
+    if "rs_rank_overall" in df.columns:
+        df = compute_rs_impulse(df)
 
     return df

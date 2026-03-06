@@ -1,4 +1,4 @@
-"""ETF Relative Strength — grid + RS/Rank/Z-Score charts."""
+"""ETF Relative Strength — grid + RS/Rank/Z-Score charts + RS Impulse."""
 
 from datetime import datetime, timedelta
 
@@ -6,7 +6,12 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config import CACHE_TTL_DEFAULT, CACHE_TTL_LONG
-from queries.stocks_queries import fetch_etf_metrics, fetch_latest_etf_grid
+from logic.chart_helpers import compute_etf_impulse
+from queries.stocks_queries import (
+    fetch_all_etf_rank_history,
+    fetch_etf_metrics,
+    fetch_latest_etf_grid,
+)
 
 st.header("ETF Relative Strength")
 
@@ -21,6 +26,15 @@ def _get_metrics(etf: str, start: str, end: str):
     return fetch_etf_metrics(etf, start, end)
 
 
+@st.cache_data(ttl=CACHE_TTL_LONG)
+def _get_impulse():
+    """Fetch 1 year of rank history, compute z-scored impulse."""
+    start = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
+    end = datetime.now().strftime("%Y-%m-%d")
+    history = fetch_all_etf_rank_history(start, end)
+    return compute_etf_impulse(history)
+
+
 # --- Date Range ---
 col1, col2 = st.columns(2)
 with col1:
@@ -28,11 +42,15 @@ with col1:
 with col2:
     end_date = st.date_input("End Date", value=datetime.now().date(), key="etf_end")
 
-# --- ETF Grid ---
+# --- ETF Grid with Impulse ---
 grid_df = _get_grid()
 if grid_df.empty:
     st.warning("No ETF metrics data available.")
     st.stop()
+
+impulse_df = _get_impulse()
+if not impulse_df.empty:
+    grid_df = grid_df.merge(impulse_df, on="etf_ticker", how="left")
 
 st.subheader("ETF Grid")
 selected = st.dataframe(
@@ -51,6 +69,40 @@ _etf_tickers = grid_df["etf_ticker"].tolist()
 _exchange_map = fetch_exchange_map(_etf_tickers)
 _watchlist = build_tradingview_watchlist(_etf_tickers, _exchange_map)
 st.download_button("Export TradingView Watchlist", _watchlist, "etf_watchlist.txt", "text/plain")
+
+# --- RS Impulse Bar Chart ---
+if not impulse_df.empty:
+    st.subheader("RS Impulse (Normalized)")
+    window_label = st.selectbox(
+        "Impulse Window",
+        options=["5d", "10d", "20d"],
+        index=1,
+        key="impulse_window",
+    )
+    z_col = f"impulse_{window_label}_z"
+    raw_col = f"impulse_{window_label}"
+
+    chart_df = impulse_df[["etf_ticker", z_col, raw_col]].dropna().copy()
+    chart_df = chart_df.sort_values(z_col, ascending=True)
+
+    colors = ["#ef5350" if v < 0 else "#26a69a" for v in chart_df[z_col]]
+
+    impulse_fig = go.Figure(go.Bar(
+        x=chart_df[z_col],
+        y=chart_df["etf_ticker"],
+        orientation="h",
+        marker_color=colors,
+        customdata=chart_df[raw_col],
+        hovertemplate="%{y}<br>Z-Score: %{x:.2f}<br>Raw: %{customdata:.4f}<extra></extra>",
+    ))
+    impulse_fig.update_layout(
+        title=f"RS Rank Impulse Z-Score ({window_label})",
+        xaxis_title="Z-Score (unusual acceleration →)",
+        yaxis_title="",
+        height=max(400, len(chart_df) * 22),
+        margin=dict(l=80),
+    )
+    st.plotly_chart(impulse_fig, use_container_width=True)
 
 # --- Charts for selected ETF ---
 selected_rows = selected.selection.rows if selected.selection else []

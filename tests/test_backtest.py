@@ -11,11 +11,13 @@ from logic.backtest import (
     HorizonStats,
     Strategy,
     StrategyResult,
+    _CONFLICTS,
     _apply_filter,
     apply_bh_correction,
     build_backtest_dataframe,
     classify_regimes,
     compute_forward_returns,
+    compute_rs_impulse,
     evaluate_strategy,
     generate_strategies,
     precompute_indicators,
@@ -483,7 +485,7 @@ class TestGenerateStrategies:
         assert len(s1) < len(s2) < len(s3)
         # With ~18 filter options × 5 regimes = 90 single-filter strategies
         assert len(s1) > 50
-        assert len(s3) < 25_000  # Should be in the low thousands
+        assert len(s3) < 60_000  # Grows with filter count; ~50K with impulse filters
 
     def test_max_filters_respected(self):
         strategies = generate_strategies(max_filters=2)
@@ -603,3 +605,163 @@ class TestPatternFilters:
             f.name.startswith("has_") for f in s.filters
         )]
         assert len(pattern_strategies) > 0
+
+
+# ---------------------------------------------------------------------------
+# TestRSImpulse
+# ---------------------------------------------------------------------------
+
+
+class TestRSImpulse:
+    @pytest.fixture
+    def impulse_df(self) -> pd.DataFrame:
+        """DataFrame with linear rs_rank_overall for predictable impulse values."""
+        frames = []
+        dates = pd.bdate_range("2023-01-01", periods=50)
+        for ticker in ["AAPL", "MSFT"]:
+            # Linear rank: 0.0, 0.02, 0.04, ... for AAPL; reversed for MSFT
+            if ticker == "AAPL":
+                ranks = np.linspace(0.0, 0.98, 50)
+            else:
+                ranks = np.linspace(0.98, 0.0, 50)
+            frames.append(pd.DataFrame({
+                "date": dates,
+                "ticker": ticker,
+                "rs_rank_overall": ranks.astype(np.float32),
+            }))
+        return pd.concat(frames, ignore_index=True)
+
+    def test_output_columns(self, impulse_df):
+        result = compute_rs_impulse(impulse_df)
+        for col in ["rs_impulse_5", "rs_impulse_10", "rs_impulse_20", "rs_impulse_42"]:
+            assert col in result.columns
+
+    def test_float32_dtype(self, impulse_df):
+        result = compute_rs_impulse(impulse_df)
+        for col in ["rs_impulse_5", "rs_impulse_10", "rs_impulse_20", "rs_impulse_42"]:
+            assert result[col].dtype == np.float32
+
+    def test_early_rows_nan(self, impulse_df):
+        """First N rows per ticker should be NaN for impulse_N."""
+        result = compute_rs_impulse(impulse_df)
+        aapl = result[result["ticker"] == "AAPL"].sort_values("date")
+        assert aapl["rs_impulse_5"].iloc[:5].isna().all()
+        assert aapl["rs_impulse_10"].iloc[:10].isna().all()
+        assert aapl["rs_impulse_20"].iloc[:20].isna().all()
+        assert aapl["rs_impulse_42"].iloc[:42].isna().all()
+
+    def test_impulse_values_correct(self, impulse_df):
+        """With linear ranks, impulse should equal step_size * window."""
+        result = compute_rs_impulse(impulse_df)
+        aapl = result[result["ticker"] == "AAPL"].sort_values("date")
+        step = 0.98 / 49  # linspace step
+        # impulse_5 at row 5 = rank[5] - rank[0] = 5 * step
+        assert aapl["rs_impulse_5"].iloc[5] == pytest.approx(5 * step, abs=1e-3)
+        assert aapl["rs_impulse_10"].iloc[10] == pytest.approx(10 * step, abs=1e-3)
+
+    def test_falling_ticker_negative_impulse(self, impulse_df):
+        """MSFT has declining ranks, so impulse should be negative."""
+        result = compute_rs_impulse(impulse_df)
+        msft = result[result["ticker"] == "MSFT"].sort_values("date")
+        non_nan = msft["rs_impulse_10"].dropna()
+        assert (non_nan < 0).all()
+
+    def test_row_count_preserved(self, impulse_df):
+        result = compute_rs_impulse(impulse_df)
+        assert len(result) == len(impulse_df)
+
+    def test_per_ticker_independence(self, impulse_df):
+        """Impulse should be computed independently per ticker."""
+        result = compute_rs_impulse(impulse_df)
+        aapl = result[result["ticker"] == "AAPL"].sort_values("date")
+        msft = result[result["ticker"] == "MSFT"].sort_values("date")
+        # AAPL rising, MSFT falling — impulse_10 should have opposite signs
+        aapl_val = aapl["rs_impulse_10"].iloc[15]
+        msft_val = msft["rs_impulse_10"].iloc[15]
+        assert aapl_val > 0
+        assert msft_val < 0
+
+
+class TestRSImpulseIntegration:
+    def test_build_backtest_includes_impulse(self, multi_ticker_ohlcv):
+        """build_backtest_dataframe should add impulse columns when metrics provided."""
+        dates = multi_ticker_ohlcv["date"].unique()
+        metrics_rows = []
+        for ticker in ["AAPL", "MSFT", "GOOGL"]:
+            for d in dates:
+                metrics_rows.append({
+                    "date": d,
+                    "ticker": ticker,
+                    "rs_rank_overall": np.random.rand(),
+                })
+        metrics = pd.DataFrame(metrics_rows)
+        result = build_backtest_dataframe(multi_ticker_ohlcv, metrics)
+        for col in ["rs_impulse_5", "rs_impulse_10", "rs_impulse_20", "rs_impulse_42"]:
+            assert col in result.columns
+
+    def test_build_backtest_no_impulse_without_metrics(self, multi_ticker_ohlcv):
+        """Without metrics, impulse columns should not be present."""
+        result = build_backtest_dataframe(multi_ticker_ohlcv)
+        assert "rs_impulse_10" not in result.columns
+
+    def test_impulse_filter_evaluation(self, sample_indicators_df):
+        """rs_impulse filters should work in evaluate_strategy."""
+        # Add impulse column
+        sample_indicators_df["rs_impulse_10"] = np.random.uniform(
+            -0.2, 0.2, len(sample_indicators_df)
+        ).astype(np.float32)
+        strategy = Strategy(
+            name="rising_impulse",
+            filters=[FilterSpec(name="rs_impulse_10_min", value=0.10)],
+        )
+        result = evaluate_strategy(sample_indicators_df, strategy)
+        expected = (sample_indicators_df["rs_impulse_10"] >= 0.10).sum()
+        assert result.n_signals == expected
+
+    def test_falling_impulse_filter(self, sample_indicators_df):
+        """rs_impulse_10_max should select falling stocks."""
+        sample_indicators_df["rs_impulse_10"] = np.random.uniform(
+            -0.2, 0.2, len(sample_indicators_df)
+        ).astype(np.float32)
+        strategy = Strategy(
+            name="falling_impulse",
+            filters=[FilterSpec(name="rs_impulse_10_max", value=-0.10)],
+        )
+        result = evaluate_strategy(sample_indicators_df, strategy)
+        expected = (sample_indicators_df["rs_impulse_10"] <= -0.10).sum()
+        assert result.n_signals == expected
+
+    def test_impulse_filters_in_filter_to_column(self):
+        for name in ["rs_impulse_10_min", "rs_impulse_10_max",
+                      "rs_impulse_20_min", "rs_impulse_20_max"]:
+            assert name in FILTER_TO_COLUMN
+
+    def test_impulse_filters_in_filter_ranges(self):
+        for name in ["rs_impulse_10_min", "rs_impulse_10_max",
+                      "rs_impulse_20_min", "rs_impulse_20_max"]:
+            assert name in FILTER_RANGES
+            assert len(FILTER_RANGES[name]) == 3
+
+    def test_impulse_conflict_detection(self):
+        """Same-window min+max should conflict."""
+        assert {"rs_impulse_10_min", "rs_impulse_10_max"} in _CONFLICTS
+        assert {"rs_impulse_20_min", "rs_impulse_20_max"} in _CONFLICTS
+
+    def test_no_impulse_cross_window_conflict(self):
+        """Different windows should NOT conflict."""
+        strategies = generate_strategies(max_filters=2)
+        cross_window = [s for s in strategies if any(
+            f.name == "rs_impulse_10_min" for f in s.filters
+        ) and any(
+            f.name == "rs_impulse_20_min" for f in s.filters
+        )]
+        assert len(cross_window) > 0
+
+    def test_generate_strategies_includes_impulse(self):
+        """generate_strategies should produce impulse-based strategies."""
+        strategies = generate_strategies(max_filters=1)
+        impulse_strategies = [s for s in strategies if any(
+            "rs_impulse" in f.name for f in s.filters
+        )]
+        # 4 filter names × 3 values × 5 regimes = 60
+        assert len(impulse_strategies) == 60
