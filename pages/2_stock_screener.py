@@ -112,6 +112,10 @@ with st.form(_form_key):
                 options=SIGNAL_SCAN_OPTIONS,
                 help="Stocks must appear in ALL selected scans",
             )
+            weekly_options_only = st.checkbox(
+                "Weekly options only",
+                help="Only show stocks with weekly option expirations",
+            )
             _mom_periods = [20, 63, 126]
             _mom_default = preset.get("momentum_period", 63)
             _mom_idx = _mom_periods.index(_mom_default) if _mom_default in _mom_periods else 1
@@ -202,6 +206,10 @@ with st.spinner("Applying pre-filters..."):
     if signal_scans:
         from queries.screener_queries import fetch_signal_scan_symbols
         restrict_sets.append(fetch_signal_scan_symbols(signal_scans))
+
+    if weekly_options_only:
+        from queries.screener_queries import fetch_weekly_options_symbols
+        restrict_sets.append(fetch_weekly_options_symbols())
 
 # Intersect all pre-filter sets
 restrict_tickers: list[str] | None = None

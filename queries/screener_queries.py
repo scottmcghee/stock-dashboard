@@ -46,6 +46,26 @@ def fetch_option_volume_spike_symbols(min_multiple: float) -> set[str]:
     return set(df["symbol"].tolist()) if not df.empty else set()
 
 
+def fetch_weekly_options_symbols() -> set[str]:
+    """Return symbols that have weekly option expirations.
+
+    Checks the latest option chain data for symbols with 3+ distinct
+    expirations within the next 30 days (weekly = ~4/month vs monthly = 1).
+    """
+    with option_connection() as conn:
+        query = """
+        SELECT symbol
+        FROM option_chain_data
+        WHERE collection_date = (SELECT MAX(collection_date) FROM option_chain_data)
+        GROUP BY symbol
+        HAVING COUNT(DISTINCT expiration_date) FILTER (
+            WHERE expiration_date BETWEEN collection_date AND collection_date + 30
+        ) >= 3
+        """
+        df = pd.read_sql_query(query, conn)
+    return set(df["symbol"].tolist()) if not df.empty else set()
+
+
 TREND_SCAN_NAMES = {"washout_bull", "washout_bear", "coiled_spring"}
 
 

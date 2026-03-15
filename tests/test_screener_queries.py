@@ -102,6 +102,21 @@ class TestFetchSignalScanSymbols:
             assert result == set()
 
 
+class TestFetchWeeklyOptionsSymbols:
+    def test_returns_weekly_symbols(self, mock_option_pool):
+        mock_df = pd.DataFrame({"symbol": ["AAPL", "MSFT", "NVDA"]})
+        with patch("pandas.read_sql_query", return_value=mock_df):
+            from queries.screener_queries import fetch_weekly_options_symbols
+            result = fetch_weekly_options_symbols()
+            assert result == {"AAPL", "MSFT", "NVDA"}
+
+    def test_empty_result(self, mock_option_pool):
+        with patch("pandas.read_sql_query", return_value=pd.DataFrame()):
+            from queries.screener_queries import fetch_weekly_options_symbols
+            result = fetch_weekly_options_symbols()
+            assert result == set()
+
+
 class TestFetchTrackedTickers:
     def test_returns_ticker_list(self, mock_stocks_pool):
         mock_df = pd.DataFrame({"ticker": ["AAPL", "MSFT", "NVDA"]})
