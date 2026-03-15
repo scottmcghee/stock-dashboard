@@ -11,6 +11,9 @@ TIER_WEIGHTS = {
     "volume_spike": 1.0,     # Tier 2
     "dxoi_change": 1.0,      # Tier 2
     "gex_level": 1.0,        # Tier 2
+    "washout_bull": 1.0,     # Tier 2 — technical trend signal
+    "washout_bear": 1.0,     # Tier 2 — technical trend signal
+    "coiled_spring": 1.0,    # Tier 2 — technical trend signal
 }
 
 

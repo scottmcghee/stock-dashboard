@@ -46,10 +46,14 @@ def fetch_option_volume_spike_symbols(min_multiple: float) -> set[str]:
     return set(df["symbol"].tolist()) if not df.empty else set()
 
 
+TREND_SCAN_NAMES = {"washout_bull", "washout_bear", "coiled_spring"}
+
+
 def fetch_signal_scan_symbols(scan_names: list[str]) -> set[str]:
     """Run selected signal scans and return the intersection of their symbol sets.
 
-    Valid scan_names: vanna_extreme, flownet_extreme, volume_spike, dxoi_change, gex_level.
+    Valid scan_names: vanna_extreme, flownet_extreme, volume_spike, dxoi_change,
+    gex_level, washout_bull, washout_bear, coiled_spring.
     """
     from queries.signal_queries import (
         scan_vanna_extreme,
@@ -68,7 +72,11 @@ def fetch_signal_scan_symbols(scan_names: list[str]) -> set[str]:
     }
 
     result_sets: list[set[str]] = []
+
+    # Option-data scans (simple DB queries)
     for name in scan_names:
+        if name in TREND_SCAN_NAMES:
+            continue
         fn = SCAN_MAP.get(name)
         if fn is None:
             continue
@@ -76,8 +84,39 @@ def fetch_signal_scan_symbols(scan_names: list[str]) -> set[str]:
         if not df.empty and "symbol" in df.columns:
             result_sets.append(set(df["symbol"].tolist()))
         else:
-            # Scan returned nothing — intersection will be empty
             return set()
+
+    # Trend scans (computed from OHLCV)
+    trend_names = [n for n in scan_names if n in TREND_SCAN_NAMES]
+    if trend_names:
+        from logic.trend_signals import (
+            compute_trend_indicators,
+            scan_coiled_spring,
+            scan_washout_bear,
+            scan_washout_bull,
+        )
+
+        tickers = fetch_tracked_tickers()
+        ohlcv = fetch_bulk_ohlcv_for_ta(tickers, lookback_days=350)
+        if ohlcv.empty:
+            return set()
+
+        indicators = compute_trend_indicators(ohlcv)
+        if indicators.empty:
+            return set()
+
+        TREND_SCAN_MAP = {
+            "washout_bull": scan_washout_bull,
+            "washout_bear": scan_washout_bear,
+            "coiled_spring": scan_coiled_spring,
+        }
+        for name in trend_names:
+            fn = TREND_SCAN_MAP[name]
+            df = fn(indicators)
+            if not df.empty and "symbol" in df.columns:
+                result_sets.append(set(df["symbol"].tolist()))
+            else:
+                return set()
 
     if not result_sets:
         return set()
@@ -166,3 +205,16 @@ def fetch_bulk_etf_ohlcv_for_ta(
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
     return df
+
+
+def fetch_tracked_tickers() -> list[str]:
+    """Get all distinct stock tickers with RS metrics on the latest date."""
+    with stocks_connection() as conn:
+        query = """
+        SELECT DISTINCT ticker
+        FROM fact_stock_metrics
+        WHERE date = (SELECT MAX(date) FROM fact_stock_metrics)
+        ORDER BY ticker
+        """
+        df = pd.read_sql_query(query, conn)
+    return df["ticker"].tolist() if not df.empty else []

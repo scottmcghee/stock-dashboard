@@ -24,6 +24,9 @@ SIGNAL_SCAN_OPTIONS = [
     "volume_spike",
     "dxoi_change",
     "gex_level",
+    "washout_bull",
+    "washout_bear",
+    "coiled_spring",
 ]
 
 MA_PERIOD_OPTIONS = [None, 5, 8, 10, 20, 21, 50, 100, 200]

@@ -59,6 +59,63 @@ class TestFetchSignalScanSymbols:
         result = fetch_signal_scan_symbols([])
         assert result == set()
 
+    def test_trend_scan_washout_bull(self, mock_stocks_pool):
+        """Trend scans use OHLCV → compute_trend_indicators → scan function."""
+        import numpy as np
+
+        # Build minimal OHLCV that triggers washout bull (selloff)
+        n = 250
+        rng = np.random.RandomState(42)
+        close = 100.0 * np.cumprod(1 + np.concatenate([
+            rng.normal(0.0005, 0.008, 200),
+            rng.normal(-0.008, 0.015, 50),
+        ]))
+        ohlcv_df = pd.DataFrame({
+            "ticker": ["TEST"] * n,
+            "date": pd.bdate_range("2025-01-01", periods=n),
+            "open": close * 1.001,
+            "high": close * 1.02,
+            "low": close * 0.98,
+            "close": close,
+            "volume": np.concatenate([
+                rng.randint(800_000, 1_200_000, 200),
+                rng.randint(1_500_000, 3_000_000, 50),
+            ]),
+        })
+
+        with patch("queries.screener_queries.fetch_tracked_tickers", return_value=["TEST"]), \
+             patch("queries.screener_queries.fetch_bulk_ohlcv_for_ta", return_value=ohlcv_df):
+            from queries.screener_queries import fetch_signal_scan_symbols
+            result = fetch_signal_scan_symbols(["washout_bull"])
+            assert "TEST" in result
+
+    def test_trend_scan_mixed_with_option_scan(self):
+        """Trend + option scans together — result is intersection."""
+        option_df = pd.DataFrame({"symbol": ["AAPL", "MSFT"], "signal_value": [1, 2]})
+
+        with patch("queries.signal_queries.scan_vanna_extreme", return_value=option_df), \
+             patch("queries.screener_queries.fetch_tracked_tickers", return_value=[]), \
+             patch("queries.screener_queries.fetch_bulk_ohlcv_for_ta", return_value=pd.DataFrame()):
+            from queries.screener_queries import fetch_signal_scan_symbols
+            # Trend scan returns empty → intersection is empty
+            result = fetch_signal_scan_symbols(["vanna_extreme", "washout_bull"])
+            assert result == set()
+
+
+class TestFetchTrackedTickers:
+    def test_returns_ticker_list(self, mock_stocks_pool):
+        mock_df = pd.DataFrame({"ticker": ["AAPL", "MSFT", "NVDA"]})
+        with patch("pandas.read_sql_query", return_value=mock_df):
+            from queries.screener_queries import fetch_tracked_tickers
+            result = fetch_tracked_tickers()
+            assert result == ["AAPL", "MSFT", "NVDA"]
+
+    def test_empty_result(self, mock_stocks_pool):
+        with patch("pandas.read_sql_query", return_value=pd.DataFrame()):
+            from queries.screener_queries import fetch_tracked_tickers
+            result = fetch_tracked_tickers()
+            assert result == []
+
 
 class TestFetchBulkOhlcvForTa:
     def test_returns_dataframe(self, mock_stocks_pool):

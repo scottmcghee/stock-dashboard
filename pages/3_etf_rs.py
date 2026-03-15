@@ -70,8 +70,9 @@ _exchange_map = fetch_exchange_map(_etf_tickers)
 _watchlist = build_tradingview_watchlist(_etf_tickers, _exchange_map)
 st.download_button("Export TradingView Watchlist", _watchlist, "etf_watchlist.txt", "text/plain")
 
-# --- RS Impulse Bar Chart ---
-if not impulse_df.empty:
+# --- RS Impulse Bar Chart (toggleable) ---
+show_impulse = st.checkbox("Show RS Impulse Chart", value=True, key="show_impulse")
+if show_impulse and not impulse_df.empty:
     st.subheader("RS Impulse (Normalized)")
     window_label = st.selectbox(
         "Impulse Window",

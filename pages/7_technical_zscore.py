@@ -64,7 +64,7 @@ if submitted:
             from queries.screener_queries import fetch_bulk_etf_ohlcv_for_ta
             from logic.technical import compute_technical_zscore_table
 
-            ohlcv = fetch_bulk_etf_ohlcv_for_ta(tickers, lookback_days=max(300, ma_period + 50))
+            ohlcv = fetch_bulk_etf_ohlcv_for_ta(tickers, lookback_days=max(600, ma_period + 50))
             if ohlcv.empty:
                 st.warning("No ETF OHLCV data available.")
                 st.stop()
@@ -96,7 +96,7 @@ if submitted:
             from queries.screener_queries import fetch_bulk_ohlcv_for_ta
             from logic.technical import compute_technical_zscore_table
 
-            ohlcv = fetch_bulk_ohlcv_for_ta(tickers, lookback_days=max(300, ma_period + 50))
+            ohlcv = fetch_bulk_ohlcv_for_ta(tickers, lookback_days=max(600, ma_period + 50))
             if ohlcv.empty:
                 st.warning("No OHLCV data available.")
                 st.stop()
@@ -198,6 +198,14 @@ selected_ticker = zscore_df.iloc[selected_idx]["ticker"]
 st.divider()
 st.subheader(f"Indicator History: {selected_ticker}")
 
+chart_timeframe = st.selectbox(
+    "Chart Timeframe",
+    options=[90, 180, 365, 504],
+    index=2,
+    format_func=lambda x: {90: "3 Months", 180: "6 Months", 365: "1 Year", 504: "2 Years"}[x],
+    key="zscore_chart_timeframe",
+)
+
 # Compute time-series indicators for the selected ticker
 ticker_ohlcv = ohlcv[ohlcv["ticker"] == selected_ticker].sort_values("date")
 if ticker_ohlcv.empty:
@@ -212,6 +220,10 @@ history = compute_indicator_history(
     momentum_period=momentum_period,
     ma_period=ma_period,
 )
+
+# Filter to selected timeframe
+cutoff = history["date"].max() - pd.Timedelta(days=chart_timeframe)
+history = history[history["date"] >= cutoff]
 
 # --- RSI Chart ---
 fig_rsi = go.Figure()
