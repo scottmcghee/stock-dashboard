@@ -5,6 +5,7 @@ import streamlit as st
 
 from config import CACHE_TTL_LONG, CACHE_TTL_SHORT
 from logic.preset import list_presets, parse_preset, PRESET_DIR
+from logic.preset_display import interpret_preset, render_preset_summary
 from queries.stocks_queries import get_all_etfs, search_stocks_by_metrics
 
 st.header("Stock Screener")
@@ -53,10 +54,12 @@ if _preset_names:
         st.session_state["_screener_reset"] = st.session_state.get("_screener_reset", 0) + 1
         st.rerun()
 
-    if preset.get("_regime"):
-        st.caption(f"Backtest regime: **{preset['_regime'].title()}**")
     if preset.get("_unmapped"):
         st.info(f"Unmapped filters (not in screener): {', '.join(preset['_unmapped'])}")
+    if preset:
+        st.caption(interpret_preset(preset))
+        with st.expander("What this preset is best for (backtested stats)"):
+            st.markdown(render_preset_summary(preset))
 
 # --- Reset Button ---
 if st.button("Reset Filters"):

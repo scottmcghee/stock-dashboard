@@ -77,6 +77,7 @@ def parse_preset(stem: str) -> dict:
         "_regime": data.get("regime"),
         "_stats": data.get("stats", {}),
         "_raw_filters": raw_filters,
+        "_discovery": data.get("discovery"),
     }
     unmapped: list[str] = []
     patterns: list[str] = []
