@@ -105,3 +105,24 @@ def fetch_contract_ohlc_history(
             mask = df[col].isna() | (df[col] <= 0)
             df.loc[mask, col] = df.loc[mask, "close"]
         return df
+
+
+def fetch_oi_weights_over_time(symbol: str, expiration_date: str) -> pd.DataFrame:
+    """Per-day OI by strike/right for (symbol, expiration). OI-basis weights."""
+    with option_connection() as conn:
+        df = pd.read_sql_query(
+            """
+            SELECT collection_date, strike, option_type,
+                   COALESCE(oi, 0)::float AS weight
+            FROM option_chain_data
+            WHERE symbol = %s AND expiration_date = %s
+            ORDER BY collection_date, strike, option_type
+            """,
+            conn,
+            params=[symbol, expiration_date],
+        )
+        if not df.empty:
+            df["collection_date"] = pd.to_datetime(df["collection_date"])
+        return df
+
+

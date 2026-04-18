@@ -122,3 +122,28 @@ class TestFetchContractOhlcHistory:
             from queries.option_contract_queries import fetch_contract_ohlc_history
             result = fetch_contract_ohlc_history("AAPL", "2026-05-16", 100.0, "call")
             assert result.empty
+
+
+class TestFetchOiWeightsOverTime:
+    def test_returns_weights_frame(self, mock_option_pool):
+        mock_df = pd.DataFrame({
+            "collection_date": ["2026-04-01", "2026-04-01", "2026-04-02"],
+            "strike": [100.0, 105.0, 100.0],
+            "option_type": ["call", "put", "call"],
+            "weight": [500.0, 300.0, 520.0],
+        })
+        with patch("pandas.read_sql_query", return_value=mock_df):
+            from queries.option_contract_queries import fetch_oi_weights_over_time
+            result = fetch_oi_weights_over_time("AAPL", "2026-05-16")
+            assert len(result) == 3
+            assert set(result.columns) == {"collection_date", "strike", "option_type", "weight"}
+            assert pd.api.types.is_datetime64_any_dtype(result["collection_date"])
+
+    def test_empty_passthrough(self, mock_option_pool):
+        empty = pd.DataFrame(columns=["collection_date", "strike", "option_type", "weight"])
+        with patch("pandas.read_sql_query", return_value=empty):
+            from queries.option_contract_queries import fetch_oi_weights_over_time
+            result = fetch_oi_weights_over_time("AAPL", "2026-05-16")
+            assert result.empty
+
+

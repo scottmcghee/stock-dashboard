@@ -3,15 +3,19 @@
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 from config import CACHE_TTL_DEFAULT, CACHE_TTL_SHORT
 from logic.chart_helpers import get_non_trading_days
+from logic.max_pain import compute_max_pain_series
 from queries.option_contract_queries import (
     fetch_contract_ohlc_history,
     fetch_oi_by_strike,
+    fetch_oi_weights_over_time,
     get_expirations,
     get_tickers_with_option_data,
 )
+from queries.stocks_queries import fetch_stock_ohlcv
 
 st.header("Option Contract Explorer")
 
@@ -34,6 +38,16 @@ def _get_oi(symbol: str, expiration_date: str) -> pd.DataFrame:
 @st.cache_data(ttl=CACHE_TTL_DEFAULT)
 def _get_history(symbol: str, expiration_date: str, strike: float, option_type: str) -> pd.DataFrame:
     return fetch_contract_ohlc_history(symbol, expiration_date, strike, option_type)
+
+
+@st.cache_data(ttl=CACHE_TTL_DEFAULT)
+def _get_oi_weights(symbol: str, expiration_date: str) -> pd.DataFrame:
+    return fetch_oi_weights_over_time(symbol, expiration_date)
+
+
+@st.cache_data(ttl=CACHE_TTL_DEFAULT)
+def _get_spot_history(ticker: str, start: str, end: str) -> pd.DataFrame:
+    return fetch_stock_ohlcv(ticker, start, end)
 
 
 # --- Ticker + expiration selectors ---
@@ -97,24 +111,71 @@ oi_fig.add_trace(go.Bar(
     hovertemplate="Strike %{y}<br>Call OI: %{x}<extra></extra>",
     text=call_vals,
 ))
+chart_height = max(400, min(900, 20 * len(strikes)))
 oi_fig.update_layout(
     title=f"{symbol} {expiration_str} — OI by Strike (click a bar to select)",
     barmode="overlay",
     bargap=0.1,
     xaxis_title="Puts ← OI → Calls",
     yaxis_title="Strike",
-    height=max(400, min(900, 20 * len(strikes))),
+    height=chart_height,
     legend=dict(orientation="h"),
     clickmode="event+select",
 )
 
-selection = st.plotly_chart(
-    oi_fig,
-    use_container_width=True,
-    on_select="rerun",
-    selection_mode="points",
-    key="oi_chart",
+# --- Max pain over time ---
+weights_df = _get_oi_weights(symbol, expiration_str)
+mp_df = compute_max_pain_series(weights_df) if not weights_df.empty else pd.DataFrame()
+
+strike_min, strike_max = (min(strikes), max(strikes)) if strikes else (None, None)
+
+mp_fig = go.Figure()
+if not mp_df.empty:
+    mp_fig.add_trace(go.Scatter(
+        x=mp_df["collection_date"],
+        y=mp_df["max_pain"],
+        mode="lines+markers",
+        name="Max Pain",
+        line=dict(color="#e15759", width=2),
+    ))
+    # Spot overlay from stocks DB
+    try:
+        start = mp_df["collection_date"].min().strftime("%Y-%m-%d")
+        end = mp_df["collection_date"].max().strftime("%Y-%m-%d")
+        spot_df = _get_spot_history(symbol, start, end)
+        if not spot_df.empty:
+            mp_fig.add_trace(go.Scatter(
+                x=spot_df["date"], y=spot_df["close"],
+                mode="lines", name=f"{symbol} Close",
+                line=dict(color="#4e79a7", width=1, dash="dot"),
+            ))
+    except Exception:
+        pass
+
+mp_fig.update_layout(
+    title="Max Pain (OI-weighted)",
+    yaxis_title="Strike",
+    xaxis_title="Date",
+    yaxis=dict(range=[strike_min, strike_max]) if strike_min is not None else None,
+    height=chart_height,
+    legend=dict(orientation="h"),
+    hovermode="x unified",
 )
+
+left, right = st.columns([1, 1])
+with left:
+    selection = st.plotly_chart(
+        oi_fig,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="points",
+        key="oi_chart",
+    )
+with right:
+    if mp_df.empty:
+        st.info("Not enough data to compute max pain for this expiration.")
+    else:
+        st.plotly_chart(mp_fig, use_container_width=True, key="mp_chart")
 
 # --- Strike + right dropdowns (synced with chart click) ---
 clicked_strike: float | None = None
@@ -157,39 +218,40 @@ if hist.empty:
     st.warning(f"No price history for {symbol} {expiration_str} {strike} {option_type}.")
     st.stop()
 
-candle_fig = go.Figure()
-candle_fig.add_trace(go.Candlestick(
-    x=hist["collection_date"],
-    open=hist["open"],
-    high=hist["high"],
-    low=hist["low"],
-    close=hist["close"],
-    name="OHLC",
-))
 non_trading = get_non_trading_days(hist["collection_date"])
-candle_fig.update_layout(
-    title=f"{symbol} {expiration_str} {strike:g} {option_type.upper()} — OHLC History",
-    xaxis_title="Date",
-    yaxis_title="Price",
-    height=500,
-    xaxis_rangeslider_visible=False,
-    xaxis=dict(rangebreaks=[dict(values=non_trading)]),
-)
-st.plotly_chart(candle_fig, use_container_width=True)
 
-with st.expander("OI & Volume history"):
-    vol_fig = go.Figure()
-    vol_fig.add_trace(go.Scatter(
-        x=hist["collection_date"], y=hist["oi"], mode="lines", name="Open Interest",
-    ))
-    vol_fig.add_trace(go.Bar(
-        x=hist["collection_date"], y=hist["day_volume"], name="Daily Volume", yaxis="y2", opacity=0.5,
-    ))
-    vol_fig.update_layout(
-        height=300,
-        yaxis=dict(title="OI"),
-        yaxis2=dict(title="Volume", overlaying="y", side="right"),
-        legend=dict(orientation="h"),
-        xaxis=dict(rangebreaks=[dict(values=non_trading)]),
-    )
-    st.plotly_chart(vol_fig, use_container_width=True)
+fig = make_subplots(
+    rows=2, cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.05,
+    row_heights=[0.7, 0.3],
+    specs=[[{"secondary_y": False}], [{"secondary_y": True}]],
+    subplot_titles=("OHLC", "OI & Volume"),
+)
+fig.add_trace(go.Candlestick(
+    x=hist["collection_date"],
+    open=hist["open"], high=hist["high"], low=hist["low"], close=hist["close"],
+    name="OHLC", showlegend=False,
+), row=1, col=1)
+fig.add_trace(go.Scatter(
+    x=hist["collection_date"], y=hist["oi"],
+    mode="lines", name="Open Interest", line=dict(color="#4e79a7"),
+), row=2, col=1, secondary_y=False)
+fig.add_trace(go.Bar(
+    x=hist["collection_date"], y=hist["day_volume"],
+    name="Daily Volume", marker_color="#f28e2b", opacity=0.6,
+), row=2, col=1, secondary_y=True)
+
+fig.update_layout(
+    title=f"{symbol} {expiration_str} {strike:g} {option_type.upper()} — OHLC History",
+    height=700,
+    xaxis_rangeslider_visible=False,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    hovermode="x unified",
+)
+fig.update_xaxes(rangebreaks=[dict(values=non_trading)])
+fig.update_yaxes(title_text="Price", row=1, col=1)
+fig.update_yaxes(title_text="OI", row=2, col=1, secondary_y=False)
+fig.update_yaxes(title_text="Volume", row=2, col=1, secondary_y=True)
+
+st.plotly_chart(fig, use_container_width=True)
