@@ -65,7 +65,7 @@ with col2:
         min_value=1,
         max_value=3,
         value=2,
-        help="Higher = more combos but slower. 1 → ~90, 2 → ~800, 3 → ~3000+.",
+        help="Higher = more combos but slower. 1 → ~260, 2 → ~6,500, 3 → ~100,000.",
     )
 
 with col3:

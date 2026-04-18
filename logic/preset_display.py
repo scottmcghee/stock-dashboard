@@ -33,6 +33,14 @@ _FILTER_LABELS: dict[str, str] = {
     "rs_impulse_10_max": "10d RS impulse ≤ {v:+.2f}",
     "rs_impulse_20_min": "20d RS impulse ≥ {v:+.2f}",
     "rs_impulse_20_max": "20d RS impulse ≤ {v:+.2f}",
+    "dist_recent_low_126_min":  "Dist from 126d low ≥ {v:.1%}",
+    "dist_recent_low_126_max":  "Dist from 126d low ≤ {v:.1%}",
+    "dist_recent_high_126_min": "Dist from 126d high ≥ {v:.1%}",
+    "dist_recent_high_126_max": "Dist from 126d high ≤ {v:.1%}",
+    "dist_recent_low_63_min":   "Dist from 63d low ≥ {v:.1%}",
+    "dist_recent_low_63_max":   "Dist from 63d low ≤ {v:.1%}",
+    "dist_recent_high_63_min":  "Dist from 63d high ≥ {v:.1%}",
+    "dist_recent_high_63_max":  "Dist from 63d high ≤ {v:.1%}",
 }
 
 # Pattern filter → readable
@@ -42,6 +50,13 @@ _PATTERN_LABELS = {
     "has_high_tight_flag": "High tight flag",
     "has_cup_and_handle": "Cup & handle",
     "has_v_bottom": "V-bottom",
+    "has_evt_rsi_cross_up_30":       "Event: RSI crossed up through 30 (last 3d)",
+    "has_evt_rsi_cross_down_70":     "Event: RSI crossed down through 70 (last 3d)",
+    "has_evt_macd_bullish_cross":    "Event: MACD bullish cross (last 3d)",
+    "has_evt_macd_bearish_cross":    "Event: MACD bearish cross (last 3d)",
+    "has_evt_breakout_20d_high_vol": "Event: 20-day breakout on volume (last 3d)",
+    "has_evt_regain_200ma":          "Event: reclaimed 200MA (last 3d)",
+    "has_evt_lose_200ma":            "Event: lost 200MA (last 3d)",
 }
 
 

@@ -38,6 +38,7 @@ from logic.backtest import (
     classify_regimes,
     evaluate_all_strategies,
 )
+from logic.events import EVENT_COLUMNS as EVENT_COLS
 from logic.preset import PRESET_DIR
 from queries.backtest_queries import (
     load_metrics_universe,
@@ -184,117 +185,6 @@ def add_extra_features(ohlcv: pd.DataFrame, indicators: pd.DataFrame) -> pd.Data
 
 
 # Signal columns to scan (all scalar — "events" are Phase 2)
-def compute_pivot_proximity(ohlcv: pd.DataFrame) -> pd.DataFrame:
-    """Distance from trailing-window highs/lows — S/R proximity proxy.
-
-    For each (ticker, date), computes:
-        dist_recent_high_63/126  = (close - trailing_max_of_close) / trailing_max
-        dist_recent_low_63/126   = (close - trailing_min_of_close) / trailing_min
-
-    The trailing window excludes the last 5 bars to avoid look-ahead (a pivot
-    must be "old enough" to have been confirmed). Signs:
-        negative dist_recent_high = below trailing peak (room to run up)
-        positive dist_recent_low  = above trailing trough (room to fall)
-    """
-    rows = []
-    for ticker, g in ohlcv.groupby("ticker"):
-        g = g.sort_values("date").copy()
-        close = g["close"]
-        # Trailing max/min from the close series, excluding the last 5 bars.
-        shifted = close.shift(5)
-        max_63 = shifted.rolling(63, min_periods=20).max()
-        max_126 = shifted.rolling(126, min_periods=40).max()
-        min_63 = shifted.rolling(63, min_periods=20).min()
-        min_126 = shifted.rolling(126, min_periods=40).min()
-        rows.append(pd.DataFrame({
-            "date": g["date"].values,
-            "ticker": ticker,
-            "dist_recent_high_63":  (close / max_63 - 1.0).values,
-            "dist_recent_high_126": (close / max_126 - 1.0).values,
-            "dist_recent_low_63":   (close / min_63 - 1.0).values,
-            "dist_recent_low_126":  (close / min_126 - 1.0).values,
-        }))
-    if not rows:
-        return pd.DataFrame()
-    out = pd.concat(rows, ignore_index=True)
-    float_cols = [c for c in out.columns if c not in ("date", "ticker")]
-    out[float_cols] = out[float_cols].astype(np.float32)
-    return out
-
-
-# ---------------------------------------------------------------------------
-# Event detection — binary "fired in last K days" flags
-# ---------------------------------------------------------------------------
-
-EVENT_COLS = [
-    "evt_rsi_cross_up_30",
-    "evt_rsi_cross_down_70",
-    "evt_macd_bullish_cross",
-    "evt_macd_bearish_cross",
-    "evt_breakout_20d_high_vol",
-    "evt_regain_200ma",
-    "evt_lose_200ma",
-]
-
-
-def _event_flag(series: pd.Series, lookback: int = 3) -> pd.Series:
-    """Rolling-OR: has the boolean series been True in any of the last `lookback` bars?"""
-    return series.fillna(False).astype(bool).rolling(lookback, min_periods=1).max().astype(bool)
-
-
-def detect_event_columns(panel: pd.DataFrame, ohlcv: pd.DataFrame, lookback: int = 3) -> pd.DataFrame:
-    """Add event_* boolean columns to panel using rolling logic per ticker.
-
-    Uses indicator columns from `panel` plus `close` from `ohlcv` (which is not
-    included in the backtester-built panel).
-    """
-    if panel.empty:
-        return panel
-    out_rows = []
-    needed_panel = ("rsi_14", "macd_histogram", "volume_z", "ratio_to_200ma")
-    missing = [c for c in needed_panel if c not in panel.columns]
-    if missing:
-        for col in EVENT_COLS:
-            panel[col] = False
-        return panel
-
-    # Merge close in — keep the merge frame lean to avoid bloating panel memory.
-    close_df = ohlcv[["date", "ticker", "close"]]
-    merged = panel.merge(close_df, on=["date", "ticker"], how="left")
-
-    for ticker, g in merged.groupby("ticker"):
-        g = g.sort_values("date").copy()
-        rsi = g["rsi_14"]
-        macd_h = g["macd_histogram"]
-        close = g["close"]
-        vol_z = g["volume_z"]
-        ratio_200 = g["ratio_to_200ma"]
-
-        rsi_cross_up_30_today = (rsi > 30) & (rsi.shift(1) <= 30)
-        rsi_cross_down_70_today = (rsi < 70) & (rsi.shift(1) >= 70)
-        macd_bull_today = (macd_h > 0) & (macd_h.shift(1) <= 0)
-        macd_bear_today = (macd_h < 0) & (macd_h.shift(1) >= 0)
-        high_20 = close.shift(1).rolling(20, min_periods=10).max()
-        breakout_today = (close >= high_20) & (vol_z >= 1.5)
-        regain_today = (ratio_200 >= 1.0) & (ratio_200.shift(1) < 1.0)
-        lose_today = (ratio_200 < 1.0) & (ratio_200.shift(1) >= 1.0)
-
-        out_rows.append(pd.DataFrame({
-            "date": g["date"].values,
-            "ticker": ticker,
-            "evt_rsi_cross_up_30":       _event_flag(rsi_cross_up_30_today, lookback).values,
-            "evt_rsi_cross_down_70":     _event_flag(rsi_cross_down_70_today, lookback).values,
-            "evt_macd_bullish_cross":    _event_flag(macd_bull_today, lookback).values,
-            "evt_macd_bearish_cross":    _event_flag(macd_bear_today, lookback).values,
-            "evt_breakout_20d_high_vol": _event_flag(breakout_today, lookback).values,
-            "evt_regain_200ma":          _event_flag(regain_today, lookback).values,
-            "evt_lose_200ma":            _event_flag(lose_today, lookback).values,
-        }))
-
-    event_df = pd.concat(out_rows, ignore_index=True)
-    return panel.merge(event_df, on=["date", "ticker"], how="left")
-
-
 def event_conditional_analysis(
     panel: pd.DataFrame,
     target: str,
@@ -720,20 +610,13 @@ def main() -> None:
     print("Adding 52w distance, BB %B, ATR/price, BB width...")
     panel = add_extra_features(ohlcv, panel)
 
-    if not args.skip_sr:
-        print("Computing S/R proximity (trailing-window highs/lows)...")
-        pivot = compute_pivot_proximity(ohlcv)
-        panel = panel.merge(pivot, on=["date", "ticker"], how="left")
-        del pivot
-
-    if not args.skip_events:
-        print("Detecting events (crossovers, breakouts, 200MA regain/lose)...")
-        panel = detect_event_columns(panel, ohlcv, lookback=args.event_lookback)
+    # S/R proximity and events are now computed inside precompute_indicators;
+    # they're already present on `panel`. Report event fire rates if desired.
+    if not args.skip_events and any(c in panel.columns for c in EVENT_COLS):
         print(f"  event fire rates:")
         for ev in EVENT_COLS:
-            if ev in panel.columns:
-                rate = panel[ev].mean()
-                print(f"    {ev}: {rate:.3%}")
+            rate = panel[ev].mean()
+            print(f"    {ev}: {rate:.3%}")
 
     del ohlcv
     gc.collect()

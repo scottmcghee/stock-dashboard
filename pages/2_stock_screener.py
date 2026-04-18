@@ -181,12 +181,44 @@ with st.form(_form_key):
                 "Gap Lookback (bars)", min_value=1, max_value=20, value=5, step=1,
                 help="Number of bars to search for a gap",
             )
+            dist_low126_min = st.number_input(
+                "Dist from 126d Low Min (%)",
+                value=preset.get("dist_recent_low_126_min"),
+                step=1.0, format="%.1f",
+                help=(
+                    "% distance above the trailing 126-day low (e.g. 10 = "
+                    "10% above). Discovery study's #1 replicating signal — "
+                    "being well above trailing low predicts mean-reversion drag."
+                ),
+            )
+            dist_low126_max = st.number_input(
+                "Dist from 126d Low Max (%)",
+                value=preset.get("dist_recent_low_126_max"),
+                step=1.0, format="%.1f",
+                help="% distance (negative = below trailing low)",
+            )
         pattern_scans = st.multiselect(
             "Chart Patterns",
             options=["high_tight_flag", "bull_flag", "bear_flag", "cup_and_handle", "v_bottom"],
             default=preset.get("pattern_scans", []),
             format_func=lambda x: x.replace("_", " ").title(),
             help="Only show stocks matching at least one selected pattern",
+        )
+        _EVENT_UI_LABELS = {
+            "evt_rsi_cross_up_30":       "RSI cross ↑30 (last 3d)",
+            "evt_rsi_cross_down_70":     "RSI cross ↓70 (last 3d)",
+            "evt_macd_bullish_cross":    "MACD bullish cross (last 3d)",
+            "evt_macd_bearish_cross":    "MACD bearish cross (last 3d)",
+            "evt_breakout_20d_high_vol": "20d breakout on volume (last 3d)",
+            "evt_regain_200ma":          "Reclaimed 200MA (last 3d)",
+            "evt_lose_200ma":            "Lost 200MA (last 3d)",
+        }
+        event_scans = st.multiselect(
+            "TA Events",
+            options=list(_EVENT_UI_LABELS.keys()),
+            default=[],
+            format_func=lambda x: _EVENT_UI_LABELS[x],
+            help="Only show stocks where at least one selected event fired in the last 3 bars",
         )
 
     submitted = st.form_submit_button("Search", type="primary")
@@ -257,6 +289,8 @@ ta_active = (
     or momentum_max is not None
     or ratio_to_ma_min is not None
     or ratio_to_ma_max is not None
+    or dist_low126_min is not None
+    or dist_low126_max is not None
 )
 ta_info: dict[str, dict] = {}
 
@@ -286,9 +320,26 @@ if ta_active:
                 ratio_to_ma_min=float(ratio_to_ma_min) if ratio_to_ma_min is not None else None,
                 ratio_to_ma_max=float(ratio_to_ma_max) if ratio_to_ma_max is not None else None,
                 ratio_to_ma_period=int(ratio_to_ma_period),
+                dist_recent_low_126_min=(float(dist_low126_min) / 100.0) if dist_low126_min is not None else None,
+                dist_recent_low_126_max=(float(dist_low126_max) / 100.0) if dist_low126_max is not None else None,
                 timeframe=ta_timeframe,
             )
             results = results[results["ticker"].isin(ta_info.keys())]
+
+# --- Event filter: keep tickers where any selected event fired in last 3 bars ---
+event_flags: dict[str, dict[str, bool]] = {}
+if event_scans and not results.empty:
+    with st.spinner("Computing TA events..."):
+        from queries.screener_queries import fetch_bulk_ohlcv_for_ta
+        from logic.events import latest_event_flags_bulk
+        survivors = results["ticker"].unique().tolist()
+        ohlcv_for_events = fetch_bulk_ohlcv_for_ta(survivors) if not ta_active else ohlcv
+        event_flags = latest_event_flags_bulk(ohlcv_for_events, survivors)
+        passing = {
+            t for t, flags in event_flags.items()
+            if any(flags.get(e, False) for e in event_scans)
+        }
+        results = results[results["ticker"].isin(passing)]
 
 if results.empty:
     st.warning("No stocks found after applying technical filters.")

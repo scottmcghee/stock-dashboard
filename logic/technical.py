@@ -271,6 +271,8 @@ def apply_ta_filters(
     ratio_to_ma_min: float | None = None,
     ratio_to_ma_max: float | None = None,
     ratio_to_ma_period: int = 200,
+    dist_recent_low_126_min: float | None = None,
+    dist_recent_low_126_max: float | None = None,
     timeframe: str = "D",
 ) -> dict[str, dict]:
     """Apply TA filters to bulk OHLCV data, return passing tickers with indicator values.
@@ -307,6 +309,8 @@ def apply_ta_filters(
         and momentum_max is None
         and ratio_to_ma_min is None
         and ratio_to_ma_max is None
+        and dist_recent_low_126_min is None
+        and dist_recent_low_126_max is None
     )
     if no_filters:
         return {t: {} for t in tickers}
@@ -383,6 +387,19 @@ def apply_ta_filters(
                 continue
             if gap_type != "any" and gap["type"] != gap_type:
                 continue
+
+        # dist_recent_low_126 filter (% distance from trailing 126-day low)
+        if dist_recent_low_126_min is not None or dist_recent_low_126_max is not None:
+            from logic.events import compute_pivot_proximity
+            _, dist_lo = compute_pivot_proximity(close, window=126)
+            dist_val = float(dist_lo.iloc[-1]) if not dist_lo.empty and pd.notna(dist_lo.iloc[-1]) else None
+            info["dist_recent_low_126"] = dist_val
+            if dist_recent_low_126_min is not None and (dist_val is None or dist_val < dist_recent_low_126_min):
+                continue
+            if dist_recent_low_126_max is not None and (dist_val is None or dist_val > dist_recent_low_126_max):
+                continue
+        else:
+            info["dist_recent_low_126"] = None
 
         results[ticker] = info
 

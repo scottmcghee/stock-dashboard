@@ -13,6 +13,11 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from logic.events import (
+    EVENT_COLUMNS,
+    compute_pivot_proximity,
+    detect_events_for_ticker,
+)
 from logic.technical import (
     compute_adr,
     compute_macd,
@@ -189,6 +194,26 @@ def precompute_indicators(ohlcv: pd.DataFrame) -> pd.DataFrame:
         for col_name, arr in patterns.items():
             row[col_name] = arr
 
+        # S/R proximity (trailing-window highs/lows)
+        dist_hi_63, dist_lo_63 = compute_pivot_proximity(close, window=63)
+        dist_hi_126, dist_lo_126 = compute_pivot_proximity(close, window=126)
+        row["dist_recent_high_63"] = dist_hi_63.values
+        row["dist_recent_low_63"] = dist_lo_63.values
+        row["dist_recent_high_126"] = dist_hi_126.values
+        row["dist_recent_low_126"] = dist_lo_126.values
+
+        # Events (require rsi, macd_hist, volume_z, ratio_to_200ma already computed)
+        events = detect_events_for_ticker(
+            close=close,
+            rsi_14=pd.Series(row["rsi_14"]),
+            macd_histogram=pd.Series(row["macd_histogram"]),
+            volume_z=pd.Series(row["volume_z"]),
+            ratio_to_200ma=pd.Series(row["ratio_to_200ma"]),
+            lookback=3,
+        )
+        for col_name, series in events.items():
+            row[col_name] = series.values
+
         results.append(row)
 
     if not results:
@@ -295,6 +320,23 @@ FILTER_TO_COLUMN = {
     "rs_impulse_10_max": "rs_impulse_10",
     "rs_impulse_20_min": "rs_impulse_20",
     "rs_impulse_20_max": "rs_impulse_20",
+    # S/R proximity (negative = below trailing peak / above trailing trough)
+    "dist_recent_high_63_min": "dist_recent_high_63",
+    "dist_recent_high_63_max": "dist_recent_high_63",
+    "dist_recent_low_63_min":  "dist_recent_low_63",
+    "dist_recent_low_63_max":  "dist_recent_low_63",
+    "dist_recent_high_126_min": "dist_recent_high_126",
+    "dist_recent_high_126_max": "dist_recent_high_126",
+    "dist_recent_low_126_min":  "dist_recent_low_126",
+    "dist_recent_low_126_max":  "dist_recent_low_126",
+    # Events (has_-prefix → boolean filter)
+    "has_evt_rsi_cross_up_30":       "evt_rsi_cross_up_30",
+    "has_evt_rsi_cross_down_70":     "evt_rsi_cross_down_70",
+    "has_evt_macd_bullish_cross":    "evt_macd_bullish_cross",
+    "has_evt_macd_bearish_cross":    "evt_macd_bearish_cross",
+    "has_evt_breakout_20d_high_vol": "evt_breakout_20d_high_vol",
+    "has_evt_regain_200ma":          "evt_regain_200ma",
+    "has_evt_lose_200ma":            "evt_lose_200ma",
 }
 
 HORIZON_COLUMNS = ["fwd_5", "fwd_10", "fwd_20", "fwd_63"]
@@ -453,6 +495,18 @@ FILTER_RANGES: dict[str, list] = {
     "rs_impulse_10_max": [-0.05, -0.10, -0.15],
     "rs_impulse_20_min": [0.05, 0.10, 0.15],
     "rs_impulse_20_max": [-0.05, -0.10, -0.15],
+    # S/R proximity — only dist_recent_low_126 here (top empirical replicator).
+    # Other S/R columns are still in FILTER_TO_COLUMN for manual use, just
+    # not auto-generated into strategy combos.
+    "dist_recent_low_126_min": [0.10, 0.20],  # ≥ 10%/20% above trailing low
+    "dist_recent_low_126_max": [-0.05, 0.0],
+    # Events — only the FDR-significant ones from the 800-ticker study
+    "has_evt_rsi_cross_down_70":     [True],
+    "has_evt_macd_bullish_cross":    [True],
+    "has_evt_macd_bearish_cross":    [True],
+    "has_evt_breakout_20d_high_vol": [True],
+    "has_evt_regain_200ma":          [True],
+    "has_evt_lose_200ma":            [True],
 }
 
 REGIMES: list[str | None] = [None, "bull", "bear", "volatile", "correction"]

@@ -483,9 +483,9 @@ class TestGenerateStrategies:
         s2 = generate_strategies(max_filters=2)
         s3 = generate_strategies(max_filters=3)
         assert len(s1) < len(s2) < len(s3)
-        # With ~18 filter options × 5 regimes = 90 single-filter strategies
-        assert len(s1) > 50
-        assert len(s3) < 60_000  # Grows with filter count; ~50K with impulse filters
+        # After events + S/R: ~260 / ~6.5K / ~100K
+        assert len(s1) > 100
+        assert len(s3) < 200_000
 
     def test_max_filters_respected(self):
         strategies = generate_strategies(max_filters=2)

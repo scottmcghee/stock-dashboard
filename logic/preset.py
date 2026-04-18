@@ -28,6 +28,9 @@ PRESET_FILTER_MAP: dict[str, tuple] = {
     "ratio_to_50ma_max": ("ratio_to_ma_max", float),
     "ratio_to_200ma_min": ("ratio_to_ma_min", float),
     "ratio_to_200ma_max": ("ratio_to_ma_max", float),
+    # S/R proximity (backtester stores as decimal; screener widget expects %)
+    "dist_recent_low_126_min": ("dist_recent_low_126_min", lambda v: v * 100.0),
+    "dist_recent_low_126_max": ("dist_recent_low_126_max", lambda v: v * 100.0),
 }
 
 PATTERN_FILTER_NAMES = {
