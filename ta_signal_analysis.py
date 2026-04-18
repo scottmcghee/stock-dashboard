@@ -184,6 +184,172 @@ def add_extra_features(ohlcv: pd.DataFrame, indicators: pd.DataFrame) -> pd.Data
 
 
 # Signal columns to scan (all scalar — "events" are Phase 2)
+def compute_pivot_proximity(ohlcv: pd.DataFrame) -> pd.DataFrame:
+    """Distance from trailing-window highs/lows — S/R proximity proxy.
+
+    For each (ticker, date), computes:
+        dist_recent_high_63/126  = (close - trailing_max_of_close) / trailing_max
+        dist_recent_low_63/126   = (close - trailing_min_of_close) / trailing_min
+
+    The trailing window excludes the last 5 bars to avoid look-ahead (a pivot
+    must be "old enough" to have been confirmed). Signs:
+        negative dist_recent_high = below trailing peak (room to run up)
+        positive dist_recent_low  = above trailing trough (room to fall)
+    """
+    rows = []
+    for ticker, g in ohlcv.groupby("ticker"):
+        g = g.sort_values("date").copy()
+        close = g["close"]
+        # Trailing max/min from the close series, excluding the last 5 bars.
+        shifted = close.shift(5)
+        max_63 = shifted.rolling(63, min_periods=20).max()
+        max_126 = shifted.rolling(126, min_periods=40).max()
+        min_63 = shifted.rolling(63, min_periods=20).min()
+        min_126 = shifted.rolling(126, min_periods=40).min()
+        rows.append(pd.DataFrame({
+            "date": g["date"].values,
+            "ticker": ticker,
+            "dist_recent_high_63":  (close / max_63 - 1.0).values,
+            "dist_recent_high_126": (close / max_126 - 1.0).values,
+            "dist_recent_low_63":   (close / min_63 - 1.0).values,
+            "dist_recent_low_126":  (close / min_126 - 1.0).values,
+        }))
+    if not rows:
+        return pd.DataFrame()
+    out = pd.concat(rows, ignore_index=True)
+    float_cols = [c for c in out.columns if c not in ("date", "ticker")]
+    out[float_cols] = out[float_cols].astype(np.float32)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Event detection — binary "fired in last K days" flags
+# ---------------------------------------------------------------------------
+
+EVENT_COLS = [
+    "evt_rsi_cross_up_30",
+    "evt_rsi_cross_down_70",
+    "evt_macd_bullish_cross",
+    "evt_macd_bearish_cross",
+    "evt_breakout_20d_high_vol",
+    "evt_regain_200ma",
+    "evt_lose_200ma",
+]
+
+
+def _event_flag(series: pd.Series, lookback: int = 3) -> pd.Series:
+    """Rolling-OR: has the boolean series been True in any of the last `lookback` bars?"""
+    return series.fillna(False).astype(bool).rolling(lookback, min_periods=1).max().astype(bool)
+
+
+def detect_event_columns(panel: pd.DataFrame, ohlcv: pd.DataFrame, lookback: int = 3) -> pd.DataFrame:
+    """Add event_* boolean columns to panel using rolling logic per ticker.
+
+    Uses indicator columns from `panel` plus `close` from `ohlcv` (which is not
+    included in the backtester-built panel).
+    """
+    if panel.empty:
+        return panel
+    out_rows = []
+    needed_panel = ("rsi_14", "macd_histogram", "volume_z", "ratio_to_200ma")
+    missing = [c for c in needed_panel if c not in panel.columns]
+    if missing:
+        for col in EVENT_COLS:
+            panel[col] = False
+        return panel
+
+    # Merge close in — keep the merge frame lean to avoid bloating panel memory.
+    close_df = ohlcv[["date", "ticker", "close"]]
+    merged = panel.merge(close_df, on=["date", "ticker"], how="left")
+
+    for ticker, g in merged.groupby("ticker"):
+        g = g.sort_values("date").copy()
+        rsi = g["rsi_14"]
+        macd_h = g["macd_histogram"]
+        close = g["close"]
+        vol_z = g["volume_z"]
+        ratio_200 = g["ratio_to_200ma"]
+
+        rsi_cross_up_30_today = (rsi > 30) & (rsi.shift(1) <= 30)
+        rsi_cross_down_70_today = (rsi < 70) & (rsi.shift(1) >= 70)
+        macd_bull_today = (macd_h > 0) & (macd_h.shift(1) <= 0)
+        macd_bear_today = (macd_h < 0) & (macd_h.shift(1) >= 0)
+        high_20 = close.shift(1).rolling(20, min_periods=10).max()
+        breakout_today = (close >= high_20) & (vol_z >= 1.5)
+        regain_today = (ratio_200 >= 1.0) & (ratio_200.shift(1) < 1.0)
+        lose_today = (ratio_200 < 1.0) & (ratio_200.shift(1) >= 1.0)
+
+        out_rows.append(pd.DataFrame({
+            "date": g["date"].values,
+            "ticker": ticker,
+            "evt_rsi_cross_up_30":       _event_flag(rsi_cross_up_30_today, lookback).values,
+            "evt_rsi_cross_down_70":     _event_flag(rsi_cross_down_70_today, lookback).values,
+            "evt_macd_bullish_cross":    _event_flag(macd_bull_today, lookback).values,
+            "evt_macd_bearish_cross":    _event_flag(macd_bear_today, lookback).values,
+            "evt_breakout_20d_high_vol": _event_flag(breakout_today, lookback).values,
+            "evt_regain_200ma":          _event_flag(regain_today, lookback).values,
+            "evt_lose_200ma":            _event_flag(lose_today, lookback).values,
+        }))
+
+    event_df = pd.concat(out_rows, ignore_index=True)
+    return panel.merge(event_df, on=["date", "ticker"], how="left")
+
+
+def event_conditional_analysis(
+    panel: pd.DataFrame,
+    target: str,
+    event_cols: list[str],
+    group_col: str | None = None,
+) -> pd.DataFrame:
+    """For each event, compare forward-return distribution when fired vs when not.
+
+    Welch's t-test for unequal variances; BH-FDR applied across all rows.
+    If `group_col` is None, one row per event; else one row per (group, event).
+    """
+    y = panel[target]
+    y_hit = y.quantile(0.90)
+    rows = []
+
+    if group_col is None:
+        groups = [(None, panel)]
+    else:
+        groups = list(panel.groupby(group_col))
+
+    for gkey, g in groups:
+        unconditional = g[target].dropna()
+        if len(unconditional) < 50:
+            continue
+        uncond_mean = float(unconditional.mean())
+        uncond_hit = float((unconditional >= y_hit).mean())
+        for ev in event_cols:
+            if ev not in g.columns:
+                continue
+            fired = g.loc[g[ev] == True, target].dropna()
+            if len(fired) < 50:
+                continue
+            n = int(len(fired))
+            m = float(fired.mean())
+            hit = float((fired >= y_hit).mean())
+            lift = (m - uncond_mean) * 10_000
+            t, p = stats.ttest_ind(fired, unconditional, equal_var=False)
+            row = {
+                "event": ev, "n": n,
+                "cond_mean": m, "uncond_mean": uncond_mean,
+                "lift_bps": lift,
+                "cond_hit_rate": hit, "uncond_hit_rate": uncond_hit,
+                "t_stat": float(t), "p_value": float(p),
+            }
+            if group_col is not None:
+                row[group_col] = gkey
+            rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+    out = pd.DataFrame(rows)
+    out["p_fdr"] = bh_fdr(out["p_value"].to_numpy())
+    return out.sort_values("p_value").reset_index(drop=True)
+
+
 SIGNAL_COLS = [
     # Overbought/oversold (scalar)
     "rsi_14", "bb_pctb", "dist_52w_high", "dist_52w_low",
@@ -198,6 +364,9 @@ SIGNAL_COLS = [
     "adr_14", "bb_width", "atr_over_price",
     # Volume (supply/demand)
     "volume_z",
+    # S/R proximity (trailing-window reference levels)
+    "dist_recent_high_63", "dist_recent_high_126",
+    "dist_recent_low_63", "dist_recent_low_126",
 ]
 
 
@@ -504,6 +673,12 @@ def main() -> None:
                    help="conditional top-decile hit rate threshold for pair export (baseline ~0.10)")
     p.add_argument("--min-regimes-replicate", type=int, default=1)
     p.add_argument("--min-time-halves-replicate", type=int, default=1)
+    p.add_argument("--skip-events", action="store_true",
+                   help="skip event detection + conditional analysis")
+    p.add_argument("--skip-sr", action="store_true",
+                   help="skip S/R proximity features")
+    p.add_argument("--event-lookback", type=int, default=3,
+                   help="bars to look back for event-fired-recently flag")
     args = p.parse_args()
 
     out_dir = Path(args.output_dir)
@@ -544,6 +719,22 @@ def main() -> None:
 
     print("Adding 52w distance, BB %B, ATR/price, BB width...")
     panel = add_extra_features(ohlcv, panel)
+
+    if not args.skip_sr:
+        print("Computing S/R proximity (trailing-window highs/lows)...")
+        pivot = compute_pivot_proximity(ohlcv)
+        panel = panel.merge(pivot, on=["date", "ticker"], how="left")
+        del pivot
+
+    if not args.skip_events:
+        print("Detecting events (crossovers, breakouts, 200MA regain/lose)...")
+        panel = detect_event_columns(panel, ohlcv, lookback=args.event_lookback)
+        print(f"  event fire rates:")
+        for ev in EVENT_COLS:
+            if ev in panel.columns:
+                rate = panel[ev].mean()
+                print(f"    {ev}: {rate:.3%}")
+
     del ohlcv
     gc.collect()
 
@@ -600,6 +791,43 @@ def main() -> None:
     per_regime.to_csv(out_dir / f"ta_per_regime_{stem}.csv", index=False)
     per_sector.to_csv(out_dir / f"ta_per_sector_{stem}.csv", index=False)
     per_time.to_csv(out_dir / f"ta_per_time_{stem}.csv", index=False)
+
+    # --- Event conditional analysis ---
+    if not args.skip_events and any(c in panel.columns for c in EVENT_COLS):
+        print("\n=== Event conditional analysis (Welch's t-test vs unconditional) ===")
+        ev_overall = event_conditional_analysis(panel, args.target, EVENT_COLS)
+        if not ev_overall.empty:
+            d = ev_overall.copy()
+            d["cond_mean"] = d["cond_mean"].map(lambda v: f"{v:+.4f}")
+            d["uncond_mean"] = d["uncond_mean"].map(lambda v: f"{v:+.4f}")
+            d["lift_bps"] = d["lift_bps"].map(lambda v: f"{v:+.0f}")
+            d["cond_hit_rate"] = d["cond_hit_rate"].map(lambda v: f"{v:.3f}")
+            d["uncond_hit_rate"] = d["uncond_hit_rate"].map(lambda v: f"{v:.3f}")
+            d["t_stat"] = d["t_stat"].map(lambda v: f"{v:+.2f}")
+            d["p_value"] = d["p_value"].map(lambda v: f"{v:.4f}")
+            d["p_fdr"] = d["p_fdr"].map(lambda v: f"{v:.4f}")
+            cols = ["event", "n", "cond_mean", "uncond_mean", "lift_bps",
+                    "cond_hit_rate", "uncond_hit_rate", "t_stat", "p_value", "p_fdr"]
+            print(d[cols].to_string(index=False))
+            ev_overall.to_csv(out_dir / f"ta_events_overall_{stem}.csv", index=False)
+
+        # Per-regime breakdown for events
+        print("\n=== Event analysis per regime ===")
+        ev_reg = event_conditional_analysis(panel, args.target, EVENT_COLS, group_col="regime")
+        if not ev_reg.empty:
+            ev_reg_display = ev_reg.copy()
+            ev_reg_display["lift_bps"] = ev_reg_display["lift_bps"].map(lambda v: f"{v:+.0f}")
+            ev_reg_display["cond_hit_rate"] = ev_reg_display["cond_hit_rate"].map(lambda v: f"{v:.3f}")
+            ev_reg_display["p_fdr"] = ev_reg_display["p_fdr"].map(lambda v: f"{v:.4f}")
+            sig_only = ev_reg[ev_reg["p_fdr"] < 0.05]
+            if not sig_only.empty:
+                print(f"  {len(sig_only)} significant (regime, event) cells at FDR<0.05")
+                print(ev_reg_display.loc[sig_only.index, [
+                    "regime", "event", "n", "lift_bps", "cond_hit_rate", "p_fdr"
+                ]].to_string(index=False))
+            else:
+                print("  (no significant cells at FDR<0.05)")
+            ev_reg.to_csv(out_dir / f"ta_events_per_regime_{stem}.csv", index=False)
 
     # --- Pairwise discovery + preset export ---
     print(f"\n=== Pairwise combo discovery (top-{args.top_k_for_pairs} signals) ===")
