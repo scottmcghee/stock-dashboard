@@ -34,9 +34,9 @@ def get_expirations(symbol: str) -> list[pd.Timestamp]:
 
 
 def fetch_oi_by_strike(symbol: str, expiration_date: str) -> pd.DataFrame:
-    """Open interest by strike/right for the latest snapshot of (symbol, expiry).
+    """Latest snapshot by strike/right for (symbol, expiry).
 
-    Returns columns: strike, option_type, oi. Empty frame if no data.
+    Returns columns: strike, option_type, oi, iv. Empty frame if no data.
     """
     with option_connection() as conn:
         with conn.cursor() as cur:
@@ -50,11 +50,12 @@ def fetch_oi_by_strike(symbol: str, expiration_date: str) -> pd.DataFrame:
             row = cur.fetchone()
             latest = row[0] if row else None
         if latest is None:
-            return pd.DataFrame(columns=["strike", "option_type", "oi"])
+            return pd.DataFrame(columns=["strike", "option_type", "oi", "iv"])
 
         df = pd.read_sql_query(
             """
-            SELECT strike, option_type, COALESCE(oi, 0) AS oi
+            SELECT strike, option_type, COALESCE(oi, 0) AS oi,
+                   volatility AS iv
             FROM option_chain_data
             WHERE symbol = %s
               AND expiration_date = %s

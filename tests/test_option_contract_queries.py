@@ -43,12 +43,13 @@ class TestFetchOiByStrike:
             "strike": [100.0, 100.0, 105.0, 105.0],
             "option_type": ["call", "put", "call", "put"],
             "oi": [500, 300, 200, 400],
+            "iv": [0.32, 0.31, 0.33, 0.34],
         })
         with patch("pandas.read_sql_query", return_value=mock_df):
             from queries.option_contract_queries import fetch_oi_by_strike
             result = fetch_oi_by_strike("AAPL", "2026-05-16")
             assert len(result) == 4
-            assert set(result.columns) == {"strike", "option_type", "oi"}
+            assert set(result.columns) == {"strike", "option_type", "oi", "iv"}
 
     def test_empty_when_no_latest_date(self, mock_option_pool):
         mock_cursor = MagicMock()
@@ -59,7 +60,7 @@ class TestFetchOiByStrike:
         from queries.option_contract_queries import fetch_oi_by_strike
         result = fetch_oi_by_strike("AAPL", "2026-05-16")
         assert result.empty
-        assert list(result.columns) == ["strike", "option_type", "oi"]
+        assert list(result.columns) == ["strike", "option_type", "oi", "iv"]
 
 
 class TestFetchContractOhlcHistory:

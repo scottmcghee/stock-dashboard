@@ -8,6 +8,7 @@ from plotly.subplots import make_subplots
 from config import CACHE_TTL_DEFAULT, CACHE_TTL_SHORT
 from logic.chart_helpers import get_non_trading_days
 from logic.max_pain import compute_max_pain_series
+from logic.richness import compute_surface_richness
 from queries.option_contract_queries import (
     fetch_contract_ohlc_history,
     fetch_oi_by_strike,
@@ -211,6 +212,43 @@ with col4:
 if strike is None or option_type is None:
     st.info("Pick a strike and right (or click a bar above) to see the contract's OHLC history.")
     st.stop()
+
+# --- Surface richness check ---
+# Is this contract trading rich relative to its peers on the same expiration?
+# Empirically (option_signal_analysis), rich contracts underperform with
+# consistent cross-ticker replication on a 5-day horizon.
+try:
+    _latest_spot = float(spot_df["close"].iloc[-1]) if not spot_df.empty else None
+except Exception:
+    _latest_spot = None
+
+if _latest_spot is not None:
+    richness = compute_surface_richness(oi_df, _latest_spot, float(strike), option_type)
+    if richness is not None:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Contract IV", f"{richness.iv:.3f}")
+        c2.metric("ATM IV", f"{richness.atm_iv:.3f}")
+        c3.metric("IV − ATM", f"{richness.iv_vs_atm:+.3f}")
+        c4.metric(
+            "Surface rank",
+            f"{richness.percentile_within_right:.0%}",
+            help=f"Within {richness.n_peers} same-right strikes on this expiration. "
+                 "100% = richest vs local surface.",
+        )
+        if richness.is_very_rich:
+            st.warning(
+                f"**Rich** — IV at the {richness.percentile_within_right:.0%} "
+                f"percentile of {richness.n_peers} same-right strikes on this "
+                f"expiration (IV − ATM = {richness.iv_vs_atm:+.3f}). Cross-ticker "
+                f"study shows these underperform residual returns over the "
+                f"following 5 days. Think twice before chasing."
+            )
+        elif richness.is_rich:
+            st.info(
+                f"Somewhat rich — IV at the {richness.percentile_within_right:.0%} "
+                f"percentile of same-right strikes on this expiration "
+                f"(IV − ATM = {richness.iv_vs_atm:+.3f})."
+            )
 
 # --- Candlestick chart for selected contract ---
 hist = _get_history(symbol, expiration_str, float(strike), option_type)
