@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from logic.max_pain import compute_max_pain_at, compute_max_pain_series
+from stock_dashboard.logic.max_pain import compute_max_pain_at, compute_max_pain_series
 
 
 def _w(rows):
@@ -54,12 +54,14 @@ class TestComputeMaxPainAt:
 
 class TestComputeMaxPainSeries:
     def test_per_day_output(self):
-        df = pd.DataFrame({
-            "collection_date": pd.to_datetime(["2026-04-01"] * 2 + ["2026-04-02"] * 2),
-            "strike": [100, 105, 100, 105],
-            "option_type": ["call", "put", "call", "put"],
-            "weight": [500, 300, 400, 500],
-        })
+        df = pd.DataFrame(
+            {
+                "collection_date": pd.to_datetime(["2026-04-01"] * 2 + ["2026-04-02"] * 2),
+                "strike": [100, 105, 100, 105],
+                "option_type": ["call", "put", "call", "put"],
+                "weight": [500, 300, 400, 500],
+            }
+        )
         result = compute_max_pain_series(df)
         assert len(result) == 2
         assert list(result.columns) == ["collection_date", "max_pain"]

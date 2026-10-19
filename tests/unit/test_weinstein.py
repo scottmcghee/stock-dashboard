@@ -2,9 +2,13 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 
-from logic.weinstein import calculate_weinstein_stages, classify_bulk_stages
+from stock_dashboard.logic.weinstein import (
+    LONG_MA_PERIOD,
+    TREND_PERIOD,
+    calculate_weinstein_stages,
+    classify_bulk_stages,
+)
 
 
 class TestCalculateWeinsteinStages:
@@ -38,34 +42,54 @@ class TestCalculateWeinsteinStages:
         """Synthetic strong uptrend should classify as Stage 2."""
         dates = pd.bdate_range("2024-01-01", periods=200)
         close = np.linspace(50, 150, 200)  # steady climb
-        df = pd.DataFrame({
-            "date": dates,
-            "open": close - 0.2,
-            "high": close + 0.5,
-            "low": close - 0.5,
-            "close": close,
-            "volume": [1_000_000] * 200,
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "open": close - 0.2,
+                "high": close + 0.5,
+                "low": close - 0.5,
+                "close": close,
+                "volume": [1_000_000] * 200,
+            }
+        )
         result = calculate_weinstein_stages(df)
-        # At least the latter portion should be Stage 2
-        last_stage = result["stage"].iloc[-1]
-        assert last_stage in ("Stage 2", "Undetermined")
+        assert result["stage"].iloc[-1] == "Stage 2"
 
     def test_strong_downtrend_gets_stage_4(self):
         """Synthetic downtrend should classify as Stage 4."""
         dates = pd.bdate_range("2024-01-01", periods=200)
         close = np.linspace(150, 50, 200)  # steady decline
-        df = pd.DataFrame({
-            "date": dates,
-            "open": close + 0.2,
-            "high": close + 0.5,
-            "low": close - 0.5,
-            "close": close,
-            "volume": [1_000_000] * 200,
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "open": close + 0.2,
+                "high": close + 0.5,
+                "low": close - 0.5,
+                "close": close,
+                "volume": [1_000_000] * 200,
+            }
+        )
         result = calculate_weinstein_stages(df)
-        last_stage = result["stage"].iloc[-1]
-        assert last_stage in ("Stage 4", "Undetermined")
+        assert result["stage"].iloc[-1] == "Stage 4"
+
+    def test_undetermined_until_long_ma_trend_is_defined(self):
+        """No stage from partial MAs: the first LONG_MA + TREND - 1 bars are Undetermined."""
+        n = 260
+        close = np.linspace(50, 150, n)
+        df = pd.DataFrame(
+            {
+                "date": pd.bdate_range("2024-01-01", periods=n),
+                "open": close - 0.2,
+                "high": close + 0.5,
+                "low": close - 0.5,
+                "close": close,
+                "volume": [1_000_000] * n,
+            }
+        )
+        stages = calculate_weinstein_stages(df)["stage"].reset_index(drop=True)
+        first_defined = LONG_MA_PERIOD + TREND_PERIOD - 1
+        assert (stages.iloc[:first_defined] == "Undetermined").all()
+        assert (stages.iloc[first_defined:] == "Stage 2").all()
 
     def test_custom_ma_periods(self, sample_ohlcv):
         result = calculate_weinstein_stages(sample_ohlcv, short_ma=30, long_ma=100)

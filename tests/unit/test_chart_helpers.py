@@ -1,15 +1,25 @@
 """Tests for logic/chart_helpers.py."""
 
+from datetime import date
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from logic.chart_helpers import (
-    resample_ohlcv,
-    get_non_trading_days,
-    compute_rs_moving_averages,
-    compute_etf_impulse,
+from stock_dashboard.logic.chart_helpers import (
+    MARKER_OFFSET,
+    RS_MA_LONG,
+    RS_MA_SHORT,
+    SIGMA,
+    best_etf,
     compute_52w_highs_lows,
+    compute_etf_impulse,
+    compute_rs_moving_averages,
+    get_non_trading_days,
+    resample_ohlcv,
+    sigma_bands,
+    signal_marker_prices,
+    trim_to_range,
 )
 
 
@@ -19,13 +29,16 @@ class TestResampleOhlcv:
         dates = pd.bdate_range("2025-01-01", periods=60)
         np.random.seed(42)
         close = 100 + np.cumsum(np.random.randn(60) * 0.5)
-        df = pd.DataFrame({
-            "open": close - 0.5,
-            "high": close + 1.0,
-            "low": close - 1.0,
-            "close": close,
-            "volume": np.random.randint(100_000, 1_000_000, size=60),
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "open": close - 0.5,
+                "high": close + 1.0,
+                "low": close - 1.0,
+                "close": close,
+                "volume": np.random.randint(100_000, 1_000_000, size=60),
+            },
+            index=dates,
+        )
         return df
 
     def test_daily_returns_unchanged(self, daily_ohlcv):
@@ -68,13 +81,15 @@ class TestGetNonTradingDays:
 
     def test_holidays_detected(self):
         # Create a series that skips a Wednesday (simulating holiday)
-        dates = pd.Series([
-            pd.Timestamp("2025-01-06"),  # Mon
-            pd.Timestamp("2025-01-07"),  # Tue
-            # Wed Jan 8 missing = "holiday"
-            pd.Timestamp("2025-01-09"),  # Thu
-            pd.Timestamp("2025-01-10"),  # Fri
-        ])
+        dates = pd.Series(
+            [
+                pd.Timestamp("2025-01-06"),  # Mon
+                pd.Timestamp("2025-01-07"),  # Tue
+                # Wed Jan 8 missing = "holiday"
+                pd.Timestamp("2025-01-09"),  # Thu
+                pd.Timestamp("2025-01-10"),  # Fri
+            ]
+        )
         non_trading = get_non_trading_days(dates)
         assert pd.Timestamp("2025-01-08") in non_trading
 
@@ -117,11 +132,15 @@ class TestComputeEtfImpulse:
         for ticker, base in [("XLK", 0.8), ("XLF", 0.5), ("XLE", 0.3)]:
             ranks = base + np.cumsum(np.random.randn(60) * 0.01)
             ranks = np.clip(ranks, 0, 1)
-            frames.append(pd.DataFrame({
-                "date": dates,
-                "etf_ticker": ticker,
-                "rs_rank_index": ranks,
-            }))
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "date": dates,
+                        "etf_ticker": ticker,
+                        "rs_rank_index": ranks,
+                    }
+                )
+            )
         return pd.concat(frames, ignore_index=True)
 
     def test_returns_one_row_per_etf(self, etf_rank_history):
@@ -142,11 +161,13 @@ class TestComputeEtfImpulse:
     def test_known_impulse_value(self):
         """Linearly rising rank should produce predictable impulse."""
         dates = pd.bdate_range("2025-01-01", periods=30)
-        df = pd.DataFrame({
-            "date": dates,
-            "etf_ticker": "TEST",
-            "rs_rank_index": np.linspace(0.0, 0.29, 30),
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "etf_ticker": "TEST",
+                "rs_rank_index": np.linspace(0.0, 0.29, 30),
+            }
+        )
         result = compute_etf_impulse(df)
         row = result.iloc[0]
         # 5-day impulse on linear data: 5 * step = 5 * 0.01 = 0.05
@@ -158,11 +179,13 @@ class TestComputeEtfImpulse:
         ranks = np.full(60, 0.5)
         # Big jump in last 5 days
         ranks[-5:] = 0.8
-        df = pd.DataFrame({
-            "date": dates,
-            "etf_ticker": "SPIKE",
-            "rs_rank_index": ranks,
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "etf_ticker": "SPIKE",
+                "rs_rank_index": ranks,
+            }
+        )
         result = compute_etf_impulse(df)
         row = result.iloc[0]
         assert row["impulse_5d_z"] > 2.0  # Should be very unusual
@@ -182,11 +205,15 @@ class TestComputeEtfImpulse:
 
         frames = []
         for ticker, ranks in [("STABLE", stable_ranks), ("VOLATILE", volatile_ranks)]:
-            frames.append(pd.DataFrame({
-                "date": dates,
-                "etf_ticker": ticker,
-                "rs_rank_index": ranks,
-            }))
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "date": dates,
+                        "etf_ticker": ticker,
+                        "rs_rank_index": ranks,
+                    }
+                )
+            )
         df = pd.concat(frames, ignore_index=True)
         result = compute_etf_impulse(df)
         stable_z = result[result["etf_ticker"] == "STABLE"]["impulse_5d_z"].iloc[0]
@@ -196,11 +223,13 @@ class TestComputeEtfImpulse:
     def test_short_history_produces_nan(self):
         """ETF with fewer rows than window should produce NaN impulse."""
         dates = pd.bdate_range("2025-01-01", periods=3)
-        df = pd.DataFrame({
-            "date": dates,
-            "etf_ticker": "SHORT",
-            "rs_rank_index": [0.5, 0.55, 0.6],
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "etf_ticker": "SHORT",
+                "rs_rank_index": [0.5, 0.55, 0.6],
+            }
+        )
         result = compute_etf_impulse(df)
         row = result.iloc[0]
         assert np.isnan(row["impulse_20d"])
@@ -217,18 +246,20 @@ class TestCompute52wHighsLows:
             ("AAPL", np.linspace(100, 200, 300), np.linspace(95, 195, 300)),
             ("BAD", np.linspace(200, 100, 300), np.linspace(195, 95, 300)),
         ]:
-            frames.append(pd.DataFrame({
-                "date": dates,
-                "ticker": ticker,
-                "high": highs,
-                "low": lows,
-            }))
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "date": dates,
+                        "ticker": ticker,
+                        "high": highs,
+                        "low": lows,
+                    }
+                )
+            )
         return pd.concat(frames, ignore_index=True)
 
     def test_returns_three_dataframes(self, sample_52w_data):
-        counts, highs, lows = compute_52w_highs_lows(
-            sample_52w_data, "2025-01-01"
-        )
+        counts, highs, lows = compute_52w_highs_lows(sample_52w_data, "2025-01-01")
         assert isinstance(counts, pd.DataFrame)
         assert isinstance(highs, pd.DataFrame)
         assert isinstance(lows, pd.DataFrame)
@@ -241,38 +272,107 @@ class TestCompute52wHighsLows:
 
     def test_uptrend_produces_highs(self, sample_52w_data):
         _, highs, _ = compute_52w_highs_lows(sample_52w_data, "2025-01-01")
-        assert "AAPL" in highs["ticker"].values
+        assert "AAPL" in highs["ticker"].to_numpy()
 
     def test_downtrend_produces_lows(self, sample_52w_data):
         _, _, lows = compute_52w_highs_lows(sample_52w_data, "2025-01-01")
-        assert "BAD" in lows["ticker"].values
+        assert "BAD" in lows["ticker"].to_numpy()
 
     def test_empty_input(self):
-        counts, highs, lows = compute_52w_highs_lows(
-            pd.DataFrame(), "2025-01-01"
-        )
+        counts, highs, lows = compute_52w_highs_lows(pd.DataFrame(), "2025-01-01")
         assert counts.empty
         assert highs.empty
         assert lows.empty
 
     def test_display_start_filters_output(self, sample_52w_data):
         """Counts should only include dates >= display_start."""
-        counts, _, _ = compute_52w_highs_lows(
-            sample_52w_data, "2025-06-01"
-        )
+        counts, _, _ = compute_52w_highs_lows(sample_52w_data, "2025-06-01")
         if not counts.empty:
             assert counts["date"].min() >= pd.Timestamp("2025-06-01")
 
     def test_insufficient_lookback_returns_empty(self):
         """Only 10 days of data — not enough for 252-day window."""
         dates = pd.bdate_range("2025-01-01", periods=10)
-        df = pd.DataFrame({
-            "date": dates,
-            "ticker": "AAPL",
-            "high": np.linspace(100, 110, 10),
-            "low": np.linspace(95, 105, 10),
-        })
-        counts, highs, lows = compute_52w_highs_lows(df, "2025-01-01")
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "ticker": "AAPL",
+                "high": np.linspace(100, 110, 10),
+                "low": np.linspace(95, 105, 10),
+            }
+        )
+        counts, highs, _lows = compute_52w_highs_lows(df, "2025-01-01")
         # rolling(252, min_periods=200) won't produce values with only 10 rows
         assert counts["new_highs"].sum() == 0
         assert highs.empty
+
+
+class TestRsMovingAveragesWindow:
+    def test_undefined_until_the_window_is_full(self):
+
+        metrics = pd.DataFrame({"relative_strength": np.arange(300, dtype=float)})
+        result = compute_rs_moving_averages(metrics)
+        assert result["MA150"].isna().sum() == RS_MA_SHORT - 1
+        assert result["MA252"].isna().sum() == RS_MA_LONG - 1
+        assert result["MA150"].iloc[-1] == pytest.approx(np.arange(150, 300).mean())
+
+
+class TestTrimToRange:
+    frame = pd.DataFrame({"date": pd.bdate_range("2026-01-01", periods=5), "v": range(5)})
+
+    def test_inclusive_bounds(self):
+
+        out = trim_to_range(self.frame, date(2026, 1, 2), "2026-01-06")
+        assert out["v"].tolist() == [1, 2, 3]
+
+    def test_unbounded(self):
+
+        assert len(trim_to_range(self.frame)) == 5
+        assert trim_to_range(self.frame, end="2026-01-01")["v"].tolist() == [0]
+
+
+class TestBestEtf:
+    def test_highest_rank_on_latest_date(self):
+
+        metrics = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-01-01", "2026-01-02", "2026-01-02", "2026-01-02"]),
+                "etf_ticker": ["ZZZ", "SEMX", "TCHX", "AAA"],
+                "rs_rank_index": [1.0, 0.4, 0.9, None],
+            }
+        )
+        assert best_etf(metrics) == "TCHX"
+
+    def test_ties_by_name_and_empty(self):
+
+        tie = pd.DataFrame(
+            {"date": [1, 1], "etf_ticker": ["TCHX", "SEMX"], "rs_rank_index": [0.5, 0.5]}
+        )
+        assert best_etf(tie) == "SEMX"
+        assert best_etf(tie.iloc[:0]) is None
+
+
+def test_signal_marker_prices():
+
+    bars = pd.DataFrame({"low": [100.0], "high": [110.0]})
+    assert signal_marker_prices(bars, bullish=True).iloc[0] == pytest.approx(
+        100 * (1 - MARKER_OFFSET)
+    )
+    assert signal_marker_prices(bars, bullish=False).iloc[0] == pytest.approx(
+        110 * (1 + MARKER_OFFSET)
+    )
+
+
+class TestSigmaBands:
+    def test_levels(self):
+
+        values = pd.Series([1.0, 2.0, 3.0, np.nan])
+        bands = dict(sigma_bands(values))
+        assert bands[f"+1{SIGMA}"] == pytest.approx(3.0)
+        assert bands[f"-1{SIGMA}"] == pytest.approx(1.0)
+        assert bands[f"+2{SIGMA}"] == pytest.approx(4.0)
+        assert len(bands) == 4
+
+    def test_too_few_values(self):
+
+        assert sigma_bands(pd.Series([1.0, np.nan])) == []

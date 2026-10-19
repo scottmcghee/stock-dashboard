@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from logic.patterns import (
+from stock_dashboard.logic.patterns import (
     PATTERN_DETECTORS,
     detect_bear_flag,
     detect_bull_flag,
@@ -19,14 +19,16 @@ from logic.patterns import (
 def _make_ohlcv(close_values: list[float], spread: float = 1.0) -> pd.DataFrame:
     """Helper to create OHLCV DataFrame from close values."""
     close = np.array(close_values, dtype=float)
-    return pd.DataFrame({
-        "date": pd.bdate_range("2025-01-01", periods=len(close)),
-        "open": close - 0.5 * spread,
-        "high": close + spread,
-        "low": close - spread,
-        "close": close,
-        "volume": [1_000_000] * len(close),
-    })
+    return pd.DataFrame(
+        {
+            "date": pd.bdate_range("2025-01-01", periods=len(close)),
+            "open": close - 0.5 * spread,
+            "high": close + spread,
+            "low": close - spread,
+            "close": close,
+            "volume": [1_000_000] * len(close),
+        }
+    )
 
 
 class TestDetectHighTightFlag:
@@ -157,15 +159,19 @@ class TestScanPatterns:
         for ticker in ["AAPL", "MSFT", "NVDA"]:
             dates = pd.bdate_range("2025-01-01", periods=200)
             close = 100 + np.cumsum(np.random.randn(200) * 0.5)
-            frames.append(pd.DataFrame({
-                "ticker": ticker,
-                "date": dates,
-                "open": close - 0.5,
-                "high": close + 1.0,
-                "low": close - 1.0,
-                "close": close,
-                "volume": np.random.randint(100_000, 5_000_000, size=200),
-            }))
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "ticker": ticker,
+                        "date": dates,
+                        "open": close - 0.5,
+                        "high": close + 1.0,
+                        "low": close - 1.0,
+                        "close": close,
+                        "volume": np.random.randint(100_000, 5_000_000, size=200),
+                    }
+                )
+            )
         return pd.concat(frames, ignore_index=True)
 
     def test_returns_dict_of_lists(self, bulk_ohlcv):
@@ -202,8 +208,11 @@ class TestRollingDetectPatterns:
         ohlcv = _make_ohlcv(list(np.linspace(100, 150, 100)))
         result = rolling_detect_patterns(ohlcv)
         expected_keys = {
-            "has_high_tight_flag", "has_bull_flag", "has_bear_flag",
-            "has_cup_and_handle", "has_v_bottom",
+            "has_high_tight_flag",
+            "has_bull_flag",
+            "has_bear_flag",
+            "has_cup_and_handle",
+            "has_v_bottom",
         }
         assert set(result.keys()) == expected_keys
         for arr in result.values():
@@ -237,7 +246,7 @@ class TestRollingDetectPatterns:
         result = rolling_detect_patterns(ohlcv)
         arr = result["has_bull_flag"]
         # The bull flag should be detected somewhere around bars 44 (end of flag)
-        # At minimum it should be detected at bar 44 (0-indexed: base=20 + pole=15 + flag=10 - 1 = 44)
+        # At minimum it is detected at bar 44 (0-indexed: base 20 + pole 15 + flag 10 - 1)
         assert arr[44] == 1
 
     def test_values_are_binary(self):

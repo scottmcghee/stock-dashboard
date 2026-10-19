@@ -4,16 +4,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from logic.backtest import (
+from stock_dashboard.logic.backtest import (
+    CONFLICTING_FILTERS,
     FILTER_RANGES,
     FILTER_TO_COLUMN,
     FilterSpec,
     HorizonStats,
     Strategy,
     StrategyResult,
-    _CONFLICTS,
-    _apply_filter,
     apply_bh_correction,
+    apply_filter,
     build_backtest_dataframe,
     classify_regimes,
     compute_forward_returns,
@@ -22,7 +22,6 @@ from logic.backtest import (
     generate_strategies,
     precompute_indicators,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -46,14 +45,16 @@ def spy_ohlcv() -> pd.DataFrame:
     for i in range(400, n):
         close[i] = close[i - 1] * (1 + 0.0003 + np.random.randn() * 0.005)
 
-    return pd.DataFrame({
-        "date": dates,
-        "open": close - 1,
-        "high": close + 2,
-        "low": close - 2,
-        "close": close,
-        "volume": np.random.randint(50_000_000, 150_000_000, size=n),
-    })
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "open": close - 1,
+            "high": close + 2,
+            "low": close - 2,
+            "close": close,
+            "volume": np.random.randint(50_000_000, 150_000_000, size=n),
+        }
+    )
 
 
 @pytest.fixture
@@ -66,15 +67,19 @@ def multi_ticker_ohlcv() -> pd.DataFrame:
         close = 100 + np.cumsum(np.random.randn(300) * 0.5)
         # Ensure positive prices
         close = np.maximum(close, 10.0)
-        frames.append(pd.DataFrame({
-            "ticker": ticker,
-            "date": dates,
-            "open": close - 0.5,
-            "high": close + 1.0,
-            "low": close - 1.0,
-            "close": close,
-            "volume": np.random.randint(100_000, 5_000_000, size=300).astype(float),
-        }))
+        frames.append(
+            pd.DataFrame(
+                {
+                    "ticker": ticker,
+                    "date": dates,
+                    "open": close - 0.5,
+                    "high": close + 1.0,
+                    "low": close - 1.0,
+                    "close": close,
+                    "volume": np.random.randint(100_000, 5_000_000, size=300).astype(float),
+                }
+            )
+        )
     return pd.concat(frames, ignore_index=True)
 
 
@@ -88,22 +93,26 @@ def sample_indicators_df() -> pd.DataFrame:
     # Repeat for 2 tickers
     rows = []
     for ticker in ["AAPL", "MSFT"]:
-        for i, d in enumerate(dates):
-            rows.append({
-                "date": d,
-                "ticker": ticker,
-                "rsi_14": 30 + np.random.rand() * 40,  # 30-70
-                "momentum_63": -10 + np.random.rand() * 30,  # -10 to 20
-                "ratio_to_200ma": 0.9 + np.random.rand() * 0.2,  # 0.9 - 1.1
-                "volume_z": -1 + np.random.rand() * 4,  # -1 to 3
-                "weinstein_stage": np.random.choice(["Stage 1", "Stage 2", "Stage 3", "Stage 4"]),
-                "rs_rank_overall": np.random.rand(),
-                "rs_z_score": np.random.randn(),
-                "fwd_5": np.random.randn() * 0.02,
-                "fwd_10": np.random.randn() * 0.03,
-                "fwd_20": np.random.randn() * 0.04,
-                "fwd_63": np.random.randn() * 0.06,
-            })
+        for _i, d in enumerate(dates):
+            rows.append(
+                {
+                    "date": d,
+                    "ticker": ticker,
+                    "rsi_14": 30 + np.random.rand() * 40,  # 30-70
+                    "momentum_63": -10 + np.random.rand() * 30,  # -10 to 20
+                    "ratio_to_200ma": 0.9 + np.random.rand() * 0.2,  # 0.9 - 1.1
+                    "volume_z": -1 + np.random.rand() * 4,  # -1 to 3
+                    "weinstein_stage": np.random.choice(
+                        ["Stage 1", "Stage 2", "Stage 3", "Stage 4"]
+                    ),
+                    "rs_rank_overall": np.random.rand(),
+                    "rs_z_score": np.random.randn(),
+                    "fwd_5": np.random.randn() * 0.02,
+                    "fwd_10": np.random.randn() * 0.03,
+                    "fwd_20": np.random.randn() * 0.04,
+                    "fwd_63": np.random.randn() * 0.06,
+                }
+            )
 
     return pd.DataFrame(rows)
 
@@ -136,14 +145,16 @@ class TestClassifyRegimes:
         n = 300
         dates = pd.bdate_range("2022-01-01", periods=n)
         close = np.linspace(300, 500, n)  # Steady uptrend
-        df = pd.DataFrame({
-            "date": dates,
-            "open": close - 1,
-            "high": close + 1,
-            "low": close - 1,
-            "close": close,
-            "volume": [100_000_000] * n,
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "open": close - 1,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": [100_000_000] * n,
+            }
+        )
         regimes = classify_regimes(df)
         # Late dates with steady uptrend and low vol should be bull
         late_regimes = regimes.iloc[-50:]
@@ -156,14 +167,16 @@ class TestClassifyRegimes:
         # Flat then sudden 15% drop
         close = np.full(n, 400.0)
         close[250:] = 340.0  # 15% drop
-        df = pd.DataFrame({
-            "date": dates,
-            "open": close,
-            "high": close + 1,
-            "low": close - 1,
-            "close": close,
-            "volume": [100_000_000] * n,
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "open": close,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": [100_000_000] * n,
+            }
+        )
         regimes = classify_regimes(df)
         # After the drop, should be "correction"
         post_drop = regimes.iloc[260:270]
@@ -179,10 +192,19 @@ class TestPrecomputeIndicators:
     def test_output_columns(self, multi_ticker_ohlcv):
         result = precompute_indicators(multi_ticker_ohlcv)
         expected_cols = {
-            "date", "ticker", "rsi_14", "momentum_20", "momentum_63",
-            "momentum_126", "ratio_to_50ma", "ratio_to_200ma",
-            "macd_histogram", "volume_z", "adr_14",
-            "weinstein_stage", "weinstein_stage_num",
+            "date",
+            "ticker",
+            "rsi_14",
+            "momentum_20",
+            "momentum_63",
+            "momentum_126",
+            "ratio_to_50ma",
+            "ratio_to_200ma",
+            "macd_histogram",
+            "volume_z",
+            "adr_14",
+            "weinstein_stage",
+            "weinstein_stage_num",
         }
         assert expected_cols.issubset(set(result.columns))
 
@@ -197,7 +219,8 @@ class TestPrecomputeIndicators:
     def test_rsi_in_valid_range(self, multi_ticker_ohlcv):
         result = precompute_indicators(multi_ticker_ohlcv)
         rsi = result["rsi_14"].dropna()
-        assert (rsi >= 0).all() and (rsi <= 100).all()
+        assert (rsi >= 0).all()
+        assert (rsi <= 100).all()
 
     def test_empty_input(self):
         empty = pd.DataFrame(columns=["ticker", "date", "open", "high", "low", "close", "volume"])
@@ -239,15 +262,17 @@ class TestComputeForwardReturns:
         """Verify fwd_5 = (close[i+5] - close[i]) / close[i]."""
         dates = pd.bdate_range("2023-01-01", periods=20)
         close = np.arange(100.0, 120.0)
-        df = pd.DataFrame({
-            "ticker": "TEST",
-            "date": dates,
-            "open": close,
-            "high": close + 1,
-            "low": close - 1,
-            "close": close,
-            "volume": [1_000_000] * 20,
-        })
+        df = pd.DataFrame(
+            {
+                "ticker": "TEST",
+                "date": dates,
+                "open": close,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": [1_000_000] * 20,
+            }
+        )
         result = compute_forward_returns(df)
         # Row 0: close=100, close[5]=105, fwd_5 = 5/100 = 0.05
         assert result["fwd_5"].iloc[0] == pytest.approx(0.05, abs=1e-10)
@@ -292,7 +317,7 @@ class TestEvaluateStrategy:
         dates = sample_indicators_df["date"].unique()
         regime = pd.Series("bull", index=pd.DatetimeIndex(dates))
         # Make half the dates "bear"
-        regime.iloc[len(regime) // 2:] = "bear"
+        regime.iloc[len(regime) // 2 :] = "bear"
 
         strategy = Strategy(
             name="bull_only",
@@ -307,6 +332,15 @@ class TestEvaluateStrategy:
         )
         assert result.n_signals < result_no_regime.n_signals
 
+    def test_regime_strategy_without_regime_series_has_no_signals(self, sample_indicators_df):
+        """A regime that cannot be evaluated must not silently become unconditional."""
+        filters = [FilterSpec(name="rsi_min", value=30)]
+        unconditional = evaluate_strategy(sample_indicators_df, Strategy("all", filters))
+        bear = evaluate_strategy(sample_indicators_df, Strategy("bear", filters, regime="bear"))
+        assert unconditional.n_signals > 0
+        assert bear.n_signals == 0
+        assert bear.horizons == {}
+
     def test_horizon_stats_populated(self, sample_indicators_df):
         """With enough signals, horizons should have stats."""
         strategy = Strategy(
@@ -315,7 +349,7 @@ class TestEvaluateStrategy:
         )
         result = evaluate_strategy(sample_indicators_df, strategy)
         assert len(result.horizons) > 0
-        for label, hs in result.horizons.items():
+        for _label, hs in result.horizons.items():
             assert isinstance(hs.mean_return, float)
             assert 0.0 <= hs.win_rate <= 1.0
             assert 0.0 <= hs.p_value <= 1.0
@@ -363,8 +397,9 @@ class TestEvaluateStrategy:
 class TestBHCorrection:
     def test_single_pvalue(self):
         """Single p-value should be unchanged."""
-        hs = HorizonStats(mean_return=0.01, median_return=0.01, win_rate=0.6,
-                          sharpe=0.5, p_value=0.03)
+        hs = HorizonStats(
+            mean_return=0.01, median_return=0.01, win_rate=0.6, sharpe=0.5, p_value=0.03
+        )
         result = StrategyResult(
             strategy=Strategy(name="test", filters=[]),
             n_signals=100,
@@ -378,13 +413,16 @@ class TestBHCorrection:
         """Multiple p-values should be adjusted upward."""
         results = []
         for i, p in enumerate([0.01, 0.02, 0.04, 0.10]):
-            hs = HorizonStats(mean_return=0.01, median_return=0.01, win_rate=0.6,
-                              sharpe=0.5, p_value=p)
-            results.append(StrategyResult(
-                strategy=Strategy(name=f"s{i}", filters=[]),
-                n_signals=100,
-                horizons={"T+5": hs},
-            ))
+            hs = HorizonStats(
+                mean_return=0.01, median_return=0.01, win_rate=0.6, sharpe=0.5, p_value=p
+            )
+            results.append(
+                StrategyResult(
+                    strategy=Strategy(name=f"s{i}", filters=[]),
+                    n_signals=100,
+                    horizons={"T+5": hs},
+                )
+            )
         apply_bh_correction(results)
 
         # All adjusted p-values should be >= original p-values
@@ -395,13 +433,16 @@ class TestBHCorrection:
         """Only p_value_adj < 0.05 should be marked significant."""
         results = []
         for p in [0.001, 0.5]:
-            hs = HorizonStats(mean_return=0.01, median_return=0.01, win_rate=0.6,
-                              sharpe=0.5, p_value=p)
-            results.append(StrategyResult(
-                strategy=Strategy(name=f"p={p}", filters=[]),
-                n_signals=100,
-                horizons={"T+5": hs},
-            ))
+            hs = HorizonStats(
+                mean_return=0.01, median_return=0.01, win_rate=0.6, sharpe=0.5, p_value=p
+            )
+            results.append(
+                StrategyResult(
+                    strategy=Strategy(name=f"p={p}", filters=[]),
+                    n_signals=100,
+                    horizons={"T+5": hs},
+                )
+            )
         apply_bh_correction(results)
         assert results[0].horizons["T+5"].significant is True
         assert results[1].horizons["T+5"].significant is False
@@ -422,13 +463,16 @@ class TestBHCorrection:
         """Adjusted p-values should never exceed 1.0."""
         results = []
         for p in [0.3, 0.4, 0.5, 0.9]:
-            hs = HorizonStats(mean_return=0.01, median_return=0.01, win_rate=0.6,
-                              sharpe=0.5, p_value=p)
-            results.append(StrategyResult(
-                strategy=Strategy(name=f"p={p}", filters=[]),
-                n_signals=100,
-                horizons={"T+5": hs},
-            ))
+            hs = HorizonStats(
+                mean_return=0.01, median_return=0.01, win_rate=0.6, sharpe=0.5, p_value=p
+            )
+            results.append(
+                StrategyResult(
+                    strategy=Strategy(name=f"p={p}", filters=[]),
+                    n_signals=100,
+                    horizons={"T+5": hs},
+                )
+            )
         apply_bh_correction(results)
         for r in results:
             assert r.horizons["T+5"].p_value_adj <= 1.0
@@ -458,9 +502,9 @@ class TestGenerateStrategies:
         for s in strategies:
             names = {f.name for f in s.filters}
             assert not ({"rsi_min", "rsi_max"}.issubset(names)), f"Conflict in {s.name}"
-            assert not (
-                {"ratio_to_200ma_min", "ratio_to_200ma_max"}.issubset(names)
-            ), f"Conflict in {s.name}"
+            assert not ({"ratio_to_200ma_min", "ratio_to_200ma_max"}.issubset(names)), (
+                f"Conflict in {s.name}"
+            )
 
     def test_no_duplicate_filter_names(self):
         """No strategy should have two filters with the same name."""
@@ -506,13 +550,15 @@ class TestBuildBacktestDataframe:
         assert "fwd_63" in result.columns
 
     def test_with_metrics(self, multi_ticker_ohlcv):
-        metrics = pd.DataFrame({
-            "date": multi_ticker_ohlcv["date"].iloc[:10],
-            "ticker": multi_ticker_ohlcv["ticker"].iloc[:10],
-            "etf_ticker": "XLK",
-            "rs_rank_overall": np.random.rand(10),
-            "rs_z_score": np.random.randn(10),
-        })
+        metrics = pd.DataFrame(
+            {
+                "date": multi_ticker_ohlcv["date"].iloc[:10],
+                "ticker": multi_ticker_ohlcv["ticker"].iloc[:10],
+                "etf_ticker": "XLK",
+                "rs_rank_overall": np.random.rand(10),
+                "rs_z_score": np.random.randn(10),
+            }
+        )
         result = build_backtest_dataframe(multi_ticker_ohlcv, metrics)
         assert "rs_rank_overall" in result.columns
         assert "rs_z_score" in result.columns
@@ -552,8 +598,11 @@ class TestPatternFilters:
         """precompute_indicators() should produce has_* pattern columns."""
         result = precompute_indicators(multi_ticker_ohlcv)
         expected_pattern_cols = {
-            "has_high_tight_flag", "has_bull_flag", "has_bear_flag",
-            "has_cup_and_handle", "has_v_bottom",
+            "has_high_tight_flag",
+            "has_bull_flag",
+            "has_bear_flag",
+            "has_cup_and_handle",
+            "has_v_bottom",
         }
         assert expected_pattern_cols.issubset(set(result.columns))
 
@@ -565,22 +614,32 @@ class TestPatternFilters:
 
     def test_pattern_filters_in_filter_to_column(self):
         """All has_* pattern filters should be in FILTER_TO_COLUMN."""
-        for name in ["has_bull_flag", "has_bear_flag", "has_high_tight_flag",
-                      "has_cup_and_handle", "has_v_bottom"]:
+        for name in [
+            "has_bull_flag",
+            "has_bear_flag",
+            "has_high_tight_flag",
+            "has_cup_and_handle",
+            "has_v_bottom",
+        ]:
             assert name in FILTER_TO_COLUMN
 
     def test_pattern_filters_in_filter_ranges(self):
         """All has_* pattern filters should be in FILTER_RANGES."""
-        for name in ["has_bull_flag", "has_bear_flag", "has_high_tight_flag",
-                      "has_cup_and_handle", "has_v_bottom"]:
+        for name in [
+            "has_bull_flag",
+            "has_bear_flag",
+            "has_high_tight_flag",
+            "has_cup_and_handle",
+            "has_v_bottom",
+        ]:
             assert name in FILTER_RANGES
             assert FILTER_RANGES[name] == [True]
 
     def test_apply_filter_has_prefix(self):
-        """_apply_filter should treat has_ prefix as boolean."""
+        """apply_filter should treat has_ prefix as boolean."""
         series = pd.Series([0, 1, 0, 1, 0], dtype=np.int8)
         fspec = FilterSpec(name="has_bull_flag", value=True)
-        mask = _apply_filter(series, fspec)
+        mask = apply_filter(series, fspec)
         assert mask.tolist() == [False, True, False, True, False]
 
     def test_pattern_filter_in_strategy(self, sample_indicators_df):
@@ -588,7 +647,9 @@ class TestPatternFilters:
         # Add pattern column: ~20% of rows have pattern
         np.random.seed(42)
         sample_indicators_df["has_bull_flag"] = np.random.choice(
-            [0, 1], size=len(sample_indicators_df), p=[0.8, 0.2],
+            [0, 1],
+            size=len(sample_indicators_df),
+            p=[0.8, 0.2],
         ).astype(np.int8)
         strategy = Strategy(
             name="bull_flags",
@@ -601,9 +662,9 @@ class TestPatternFilters:
     def test_generate_strategies_includes_patterns(self):
         """generate_strategies should produce pattern-based strategies."""
         strategies = generate_strategies(max_filters=1)
-        pattern_strategies = [s for s in strategies if any(
-            f.name.startswith("has_") for f in s.filters
-        )]
+        pattern_strategies = [
+            s for s in strategies if any(f.name.startswith("has_") for f in s.filters)
+        ]
         assert len(pattern_strategies) > 0
 
 
@@ -620,15 +681,16 @@ class TestRSImpulse:
         dates = pd.bdate_range("2023-01-01", periods=50)
         for ticker in ["AAPL", "MSFT"]:
             # Linear rank: 0.0, 0.02, 0.04, ... for AAPL; reversed for MSFT
-            if ticker == "AAPL":
-                ranks = np.linspace(0.0, 0.98, 50)
-            else:
-                ranks = np.linspace(0.98, 0.0, 50)
-            frames.append(pd.DataFrame({
-                "date": dates,
-                "ticker": ticker,
-                "rs_rank_overall": ranks.astype(np.float32),
-            }))
+            ranks = np.linspace(0.0, 0.98, 50) if ticker == "AAPL" else np.linspace(0.98, 0.0, 50)
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "date": dates,
+                        "ticker": ticker,
+                        "rs_rank_overall": ranks.astype(np.float32),
+                    }
+                )
+            )
         return pd.concat(frames, ignore_index=True)
 
     def test_output_columns(self, impulse_df):
@@ -689,11 +751,13 @@ class TestRSImpulseIntegration:
         metrics_rows = []
         for ticker in ["AAPL", "MSFT", "GOOGL"]:
             for d in dates:
-                metrics_rows.append({
-                    "date": d,
-                    "ticker": ticker,
-                    "rs_rank_overall": np.random.rand(),
-                })
+                metrics_rows.append(
+                    {
+                        "date": d,
+                        "ticker": ticker,
+                        "rs_rank_overall": np.random.rand(),
+                    }
+                )
         metrics = pd.DataFrame(metrics_rows)
         result = build_backtest_dataframe(multi_ticker_ohlcv, metrics)
         for col in ["rs_impulse_5", "rs_impulse_10", "rs_impulse_20", "rs_impulse_42"]:
@@ -732,36 +796,100 @@ class TestRSImpulseIntegration:
         assert result.n_signals == expected
 
     def test_impulse_filters_in_filter_to_column(self):
-        for name in ["rs_impulse_10_min", "rs_impulse_10_max",
-                      "rs_impulse_20_min", "rs_impulse_20_max"]:
+        for name in [
+            "rs_impulse_10_min",
+            "rs_impulse_10_max",
+            "rs_impulse_20_min",
+            "rs_impulse_20_max",
+        ]:
             assert name in FILTER_TO_COLUMN
 
     def test_impulse_filters_in_filter_ranges(self):
-        for name in ["rs_impulse_10_min", "rs_impulse_10_max",
-                      "rs_impulse_20_min", "rs_impulse_20_max"]:
+        for name in [
+            "rs_impulse_10_min",
+            "rs_impulse_10_max",
+            "rs_impulse_20_min",
+            "rs_impulse_20_max",
+        ]:
             assert name in FILTER_RANGES
             assert len(FILTER_RANGES[name]) == 3
 
     def test_impulse_conflict_detection(self):
         """Same-window min+max should conflict."""
-        assert {"rs_impulse_10_min", "rs_impulse_10_max"} in _CONFLICTS
-        assert {"rs_impulse_20_min", "rs_impulse_20_max"} in _CONFLICTS
+        assert {"rs_impulse_10_min", "rs_impulse_10_max"} in CONFLICTING_FILTERS
+        assert {"rs_impulse_20_min", "rs_impulse_20_max"} in CONFLICTING_FILTERS
 
     def test_no_impulse_cross_window_conflict(self):
         """Different windows should NOT conflict."""
         strategies = generate_strategies(max_filters=2)
-        cross_window = [s for s in strategies if any(
-            f.name == "rs_impulse_10_min" for f in s.filters
-        ) and any(
-            f.name == "rs_impulse_20_min" for f in s.filters
-        )]
+        cross_window = [
+            s
+            for s in strategies
+            if any(f.name == "rs_impulse_10_min" for f in s.filters)
+            and any(f.name == "rs_impulse_20_min" for f in s.filters)
+        ]
         assert len(cross_window) > 0
 
     def test_generate_strategies_includes_impulse(self):
         """generate_strategies should produce impulse-based strategies."""
         strategies = generate_strategies(max_filters=1)
-        impulse_strategies = [s for s in strategies if any(
-            "rs_impulse" in f.name for f in s.filters
-        )]
-        # 4 filter names × 3 values × 5 regimes = 60
+        impulse_strategies = [
+            s for s in strategies if any("rs_impulse" in f.name for f in s.filters)
+        ]
+        # 4 filter names x 3 values x 5 regimes = 60
         assert len(impulse_strategies) == 60
+
+
+# ---------------------------------------------------------------------------
+# Single source of truth for indicators and filters
+# ---------------------------------------------------------------------------
+
+from stock_dashboard.logic.backtest import (  # noqa: E402
+    INDICATOR_COLUMNS,
+    compute_ticker_indicators,
+    signal_mask,
+)
+
+
+class TestComputeTickerIndicators:
+    @pytest.fixture
+    def one_ticker(self, multi_ticker_ohlcv):
+        df = multi_ticker_ohlcv
+        return df[df["ticker"] == df["ticker"].iloc[0]].sort_values("date").reset_index(drop=True)
+
+    def test_all_columns_by_default(self, one_ticker):
+        out = compute_ticker_indicators(one_ticker)
+        assert set(INDICATOR_COLUMNS).issubset(out.columns)
+
+    def test_subset_matches_full_computation(self, one_ticker):
+        full = compute_ticker_indicators(one_ticker)
+        subset = compute_ticker_indicators(one_ticker, ["momentum_20", "dist_recent_low_63"])
+        assert set(subset.columns) == {"momentum_20", "dist_recent_high_63", "dist_recent_low_63"}
+        pd.testing.assert_series_equal(subset["momentum_20"], full["momentum_20"])
+
+    def test_events_pull_in_their_inputs(self, one_ticker):
+        out = compute_ticker_indicators(one_ticker, ["evt_regain_200ma"])
+        assert {"rsi_14", "macd_histogram", "volume_z", "ratio_to_200ma"}.issubset(out.columns)
+
+    def test_keeps_input_index(self, one_ticker):
+        shifted = one_ticker.set_index(one_ticker.index + 100)
+        assert compute_ticker_indicators(shifted, ["rsi_14"]).index.equals(shifted.index)
+
+
+class TestSignalMask:
+    def test_missing_column_matches_nothing(self):
+        df = pd.DataFrame({"rsi_14": [50.0, 60.0]})
+        assert not signal_mask(df, [FilterSpec("volume_z_min", 1.0)]).any()
+
+    def test_nan_pattern_flag_does_not_match(self):
+        df = pd.DataFrame({"has_bull_flag": [1.0, np.nan, 0.0]})
+        assert signal_mask(df, [FilterSpec("has_bull_flag", True)]).tolist() == [True, False, False]
+
+    def test_every_filter_maps_to_a_known_column(self):
+        known = set(INDICATOR_COLUMNS) | {
+            "rs_rank_overall",
+            "rs_z_score",
+            "rs_impulse_10",
+            "rs_impulse_20",
+        }
+        assert set(FILTER_TO_COLUMN.values()) <= known
