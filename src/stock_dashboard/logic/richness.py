@@ -1,15 +1,22 @@
-"""Surface-richness helpers — how "rich" is one contract's IV vs its peers?
+"""Surface rank: where one contract's IV sits on its expiration's smile.
 
-Backed by empirical finding (option_signal_analysis): contracts trading rich
-vs the local vol surface underperform on a 5-day horizon with consistent
-cross-ticker replication (|ρ| ~ 0.02-0.06 but same sign across AAPL/MSFT/
-NVDA/TSLA). Intended as a "don't chase the rich strike" UX warning.
+The contract's IV minus the at-the-money IV is ranked against the same
+quantity for every other strike of the same right and expiration. Since every
+strike is compared with the same ATM IV, this ranks the contract's IV along
+the expiration's smile: skew alone makes far out-of-the-money puts rank high.
+It says where the contract sits on the smile, not that it is mispriced; the
+option-contract page shows it as context, not a trade signal.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 
-import numpy as np
 import pandas as pd
+
+RICH_PERCENTILE = 0.80
+VERY_RICH_PERCENTILE = 0.90
+MIN_PEERS = 3
 
 
 @dataclass
@@ -23,12 +30,12 @@ class SurfaceRichness:
     @property
     def is_rich(self) -> bool:
         """Top 20% of same-right strikes on this expiration."""
-        return self.percentile_within_right >= 0.80
+        return self.percentile_within_right >= RICH_PERCENTILE
 
     @property
     def is_very_rich(self) -> bool:
         """Top 10%."""
-        return self.percentile_within_right >= 0.90
+        return self.percentile_within_right >= VERY_RICH_PERCENTILE
 
 
 def compute_surface_richness(
@@ -46,15 +53,13 @@ def compute_surface_richness(
     if not needed.issubset(chain.columns):
         return None
 
-    selected = chain[
-        (chain["strike"] == strike) & (chain["option_type"] == option_type)
-    ]
+    selected = chain[(chain["strike"] == strike) & (chain["option_type"] == option_type)]
     if selected.empty or pd.isna(selected.iloc[0]["iv"]):
         return None
     iv = float(selected.iloc[0]["iv"])
 
     same_right = chain[chain["option_type"] == option_type].dropna(subset=["iv"])
-    if len(same_right) < 3:
+    if len(same_right) < MIN_PEERS:
         return None
 
     # ATM = strike closest to spot (any right for reference).
@@ -75,5 +80,5 @@ def compute_surface_richness(
         atm_iv=atm_iv,
         iv_vs_atm=iv_vs_atm,
         percentile_within_right=float(pct),
-        n_peers=int(len(same_right)),
+        n_peers=len(same_right),
     )

@@ -1,11 +1,18 @@
-"""Chart pattern detection — pure functions, no DB or UI.
+"""Chart pattern detection: pure functions, no DB or UI.
 
 Detects: High Tight Flag (HTF), Bull Flag, Bear Flag, Cup-and-Handle, V-Bottom.
 All functions take OHLCV DataFrames and return pattern info or None.
 """
 
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
 import numpy as np
 import pandas as pd
+
+PatternMatch = dict[str, Any]
 
 
 def detect_high_tight_flag(
@@ -14,7 +21,7 @@ def detect_high_tight_flag(
     rally_window: int = 60,
     max_pullback_pct: float = 25.0,
     flag_window: int = 15,
-) -> dict | None:
+) -> PatternMatch | None:
     """Detect a High Tight Flag: massive rally followed by shallow consolidation.
 
     Criteria:
@@ -24,8 +31,8 @@ def detect_high_tight_flag(
     if len(ohlcv) < rally_window + flag_window:
         return None
 
-    close = ohlcv["close"].values
-    high = ohlcv["high"].values
+    close = ohlcv["close"].to_numpy()
+    high = ohlcv["high"].to_numpy()
 
     # Look at the recent rally_window + flag_window bars
     rally_end = len(ohlcv) - flag_window
@@ -43,7 +50,7 @@ def detect_high_tight_flag(
         return None
 
     # High must come after the low
-    high_section = high[rally_start + low_idx:rally_end]
+    high_section = high[rally_start + low_idx : rally_end]
     if len(high_section) == 0:
         return None
     rally_high = np.max(high_section)
@@ -73,7 +80,7 @@ def detect_bull_flag(
     pole_window: int = 15,
     flag_window: int = 10,
     max_flag_retrace_pct: float = 50.0,
-) -> dict | None:
+) -> PatternMatch | None:
     """Detect a Bull Flag: strong up-move (pole) followed by a shallow downward drift (flag).
 
     Criteria:
@@ -84,7 +91,7 @@ def detect_bull_flag(
     if len(ohlcv) < pole_window + flag_window:
         return None
 
-    close = ohlcv["close"].values
+    close = ohlcv["close"].to_numpy()
 
     flag_start = len(ohlcv) - flag_window
     pole_start = flag_start - pole_window
@@ -137,7 +144,7 @@ def detect_bear_flag(
     pole_window: int = 15,
     flag_window: int = 10,
     max_flag_retrace_pct: float = 50.0,
-) -> dict | None:
+) -> PatternMatch | None:
     """Detect a Bear Flag: strong down-move (pole) followed by a shallow upward drift (flag).
 
     Mirror of bull flag with inverted direction.
@@ -145,7 +152,7 @@ def detect_bear_flag(
     if len(ohlcv) < pole_window + flag_window:
         return None
 
-    close = ohlcv["close"].values
+    close = ohlcv["close"].to_numpy()
 
     flag_start = len(ohlcv) - flag_window
     pole_start = flag_start - pole_window
@@ -198,7 +205,7 @@ def detect_cup_and_handle(
     handle_window: int = 15,
     max_cup_depth_pct: float = 35.0,
     max_handle_depth_pct: float = 15.0,
-) -> dict | None:
+) -> PatternMatch | None:
     """Detect a Cup-and-Handle: U-shaped recovery with a shallow handle pullback.
 
     Criteria:
@@ -209,7 +216,7 @@ def detect_cup_and_handle(
     if len(ohlcv) < total:
         return None
 
-    close = ohlcv["close"].values
+    close = ohlcv["close"].to_numpy()
 
     handle_start = len(ohlcv) - handle_window
     cup_start = handle_start - cup_window
@@ -220,7 +227,9 @@ def detect_cup_and_handle(
     third = max(cup_window // 3, 1)
     left_rim = np.max(cup_section[:third])
     right_rim = np.max(cup_section[-third:])
-    cup_bottom = np.min(cup_section[third:-third]) if cup_window > 3 * third else np.min(cup_section)
+    cup_bottom = (
+        np.min(cup_section[third:-third]) if cup_window > 3 * third else np.min(cup_section)
+    )
 
     if left_rim <= 0:
         return None
@@ -237,7 +246,6 @@ def detect_cup_and_handle(
 
     # Handle
     handle_section = close[handle_start:]
-    handle_high = np.max(handle_section)
     handle_low = np.min(handle_section)
 
     if right_rim <= 0:
@@ -259,7 +267,7 @@ def detect_v_bottom(
     window: int = 30,
     min_decline_pct: float = 10.0,
     min_recovery_pct: float = 70.0,
-) -> dict | None:
+) -> PatternMatch | None:
     """Detect a V-Bottom: sharp decline followed by equally sharp recovery.
 
     Criteria:
@@ -269,7 +277,7 @@ def detect_v_bottom(
     if len(ohlcv) < window:
         return None
 
-    close = ohlcv["close"].values[-window:]
+    close = ohlcv["close"].to_numpy()[-window:]
     half = window // 2
 
     first_half = close[:half]
@@ -309,15 +317,18 @@ def detect_v_bottom(
 
 # Pattern windows: minimum bars needed for each detector
 _PATTERN_WINDOWS = {
-    "high_tight_flag": 75,   # 60 rally + 15 flag
-    "bull_flag": 25,         # 15 pole + 10 flag
-    "bear_flag": 25,         # 15 pole + 10 flag
-    "cup_and_handle": 75,    # 60 cup + 15 handle
-    "v_bottom": 30,          # single window
+    "high_tight_flag": 75,  # 60 rally + 15 flag
+    "bull_flag": 25,  # 15 pole + 10 flag
+    "bear_flag": 25,  # 15 pole + 10 flag
+    "cup_and_handle": 75,  # 60 cup + 15 handle
+    "v_bottom": 30,  # single window
 }
 
+# Bars a pattern scan needs at the latest bar (the longest detector window).
+PATTERN_REQUIRED_BARS = max(_PATTERN_WINDOWS.values())
+
 # All pattern detectors in scanning order
-PATTERN_DETECTORS = {
+PATTERN_DETECTORS: dict[str, Callable[[pd.DataFrame], PatternMatch | None]] = {
     "high_tight_flag": detect_high_tight_flag,
     "bull_flag": detect_bull_flag,
     "bear_flag": detect_bear_flag,
@@ -330,7 +341,7 @@ def scan_patterns(
     ohlcv_df: pd.DataFrame,
     tickers: list[str],
     patterns: list[str] | None = None,
-) -> dict[str, list[dict]]:
+) -> dict[str, list[PatternMatch]]:
     """Scan multiple tickers for chart patterns.
 
     Args:
@@ -345,14 +356,14 @@ def scan_patterns(
         patterns = list(PATTERN_DETECTORS.keys())
 
     detectors = {k: v for k, v in PATTERN_DETECTORS.items() if k in patterns}
-    results: dict[str, list[dict]] = {}
+    results: dict[str, list[PatternMatch]] = {}
 
     for ticker in tickers:
         group = ohlcv_df[ohlcv_df["ticker"] == ticker].sort_values("date")
         if group.empty:
             continue
         detected = []
-        for name, fn in detectors.items():
+        for fn in detectors.values():
             result = fn(group)
             if result is not None:
                 detected.append(result)
@@ -389,7 +400,7 @@ def rolling_detect_patterns(ohlcv: pd.DataFrame) -> dict[str, np.ndarray]:
 
         for i in range(window - 1, n):
             start = max(0, i + 1 - window)
-            slc = ohlcv.iloc[start:i + 1]
+            slc = ohlcv.iloc[start : i + 1]
             if detector(slc) is not None:
                 arr[i] = 1
 

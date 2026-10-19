@@ -31,8 +31,12 @@ def compute_max_pain_at(weights: pd.DataFrame, candidate_strikes: np.ndarray) ->
 
     S = np.asarray(candidate_strikes, dtype=float)
 
-    call_pain = np.clip(S[:, None] - call_K[None, :], 0, None) @ call_w if call_K.size else np.zeros_like(S)
-    put_pain = np.clip(put_K[None, :] - S[:, None], 0, None) @ put_w if put_K.size else np.zeros_like(S)
+    call_pain = (
+        np.clip(S[:, None] - call_K[None, :], 0, None) @ call_w if call_K.size else np.zeros_like(S)
+    )
+    put_pain = (
+        np.clip(put_K[None, :] - S[:, None], 0, None) @ put_w if put_K.size else np.zeros_like(S)
+    )
     pain = call_pain + put_pain
 
     return float(S[int(np.argmin(pain))])
