@@ -20,7 +20,7 @@ classifiers = [
 dependencies = [
     "numpy>=2.0,<3",
     "pandas>=2.2,<4",
-    "plotly>=5.24,<7",
+    "plotly>=7.1.0,<8",
     "psycopg2-binary>=2.9.9,<3",
     "pyarrow>=17,<27",
     "scipy>=1.14,<2",
@@ -42,14 +42,14 @@ dev = [
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "ruff>=0.8",
-    "testcontainers[postgres]>=4.8",
+    "testcontainers[postgres]>=4.15.0",
     "types-psycopg2>=2.9",
     # Seeds the integration-test database with the same synthetic market the demo uses.
     "rs-pipeline @ git+https://github.com/scottmcghee/rs-pipeline@37e9dbf2b517156991f484333677060a65df8210",
 ]
 
 [build-system]
-requires = ["hatchling>=1.26"]
+requires = ["hatchling>=1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
