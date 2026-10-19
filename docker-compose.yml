@@ -1,0 +1,86 @@
+# Self-contained demo (no market-data feed; the first build downloads images
+# and packages): PostgreSQL, rs-pipeline over a fictional market, generated
+# option data, and the dashboard.
+#
+#   docker compose up --build      # then open http://localhost:8501
+#   docker compose down -v         # remove the demo databases
+#
+# Startup order: db -> pipeline (fills `stocks`) -> seed (fills `option_data`
+# from those prices) -> app. A second `up` brings the data forward to the
+# latest session.
+name: stock-dashboard-demo
+
+x-db-env: &db-env
+  POSTGRES_HOST: db
+  POSTGRES_PASSWORD: demo
+
+services:
+  db:
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    environment:
+      POSTGRES_DB: stocks
+      POSTGRES_PASSWORD: demo
+    ports:
+      # psql -h localhost -p 54321 -U postgres stocks (DEMO_DB_PORT changes the port)
+      - "127.0.0.1:${DEMO_DB_PORT:-54321}:5432"
+    stop_grace_period: 30s
+    volumes:
+      # The postgres 18+ image keeps its data in a versioned directory under
+      # this one. Rename the volume (pgdata19, ...) when the image's major
+      # version changes: the new server refuses to start over old data files.
+      - pgdata18:/var/lib/postgresql
+    healthcheck:
+      # Over TCP: during first-time setup the image runs a temporary server on the
+      # Unix socket only, which a socket check would already report as ready.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "stocks"]
+      # First-time setup can take a minute or more on a busy machine; failed
+      # checks during the start period don't count.
+      start_period: 180s
+      start_interval: 1s
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  pipeline:
+    # The sibling project, built from its repository at a pinned commit.
+    build: https://github.com/scottmcghee/rs-pipeline.git#37e9dbf2b517156991f484333677060a65df8210
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_NAME: stocks
+      DB_PASSWORD: demo
+      RS_SOURCE: synthetic
+      RS_REF_TICKER: MKT
+      RS_BENCHMARK_TICKERS: MKT
+      RS_HISTORY_START: "2022-01-03"
+    command: ["demo"]
+
+  seed:
+    build: .
+    depends_on:
+      pipeline:
+        condition: service_completed_successfully
+    environment:
+      <<: *db-env
+    command: ["stock-dashboard-seed-demo"]
+
+  app:
+    build: .
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    environment:
+      <<: *db-env
+      BENCHMARK_TICKER: MKT
+    ports:
+      - "127.0.0.1:${DEMO_APP_PORT:-8501}:8501"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata18:
