@@ -54,8 +54,10 @@ class TestConnection:
         psycopg2.extensions.register_type.assert_called_once_with(db._NUMERIC_AS_FLOAT, mock_conn)
 
     def test_numeric_caster_returns_float(self):
-        assert db._NUMERIC_AS_FLOAT("12.50", None) == 12.5
-        assert db._NUMERIC_AS_FLOAT(None, None) is None
+        # The conversion itself: calling the psycopg2 caster object without a real
+        # cursor crashes some psycopg2 builds, so the function is tested directly.
+        assert db._numeric_to_float("12.50", None) == 12.5
+        assert db._numeric_to_float(None, None) is None
 
 
 class TestReadDf:

@@ -49,10 +49,14 @@ _NUMBER_TYPE_CODES = frozenset(
     + psycopg2.extensions.FLOAT.values  # noqa: PD011
     + psycopg2.extensions.DECIMAL.values  # noqa: PD011
 )
+
+
+def _numeric_to_float(value: str | bytes | None, _cursor: object) -> float | None:
+    return None if value is None else float(value)
+
+
 _NUMERIC_AS_FLOAT = psycopg2.extensions.new_type(
-    psycopg2.extensions.DECIMAL.values,
-    "NUMERIC_AS_FLOAT",
-    lambda value, _cursor: None if value is None else float(value),
+    psycopg2.extensions.DECIMAL.values, "NUMERIC_AS_FLOAT", _numeric_to_float
 )
 
 _Params = Sequence[Any] | Mapping[str, Any] | None
