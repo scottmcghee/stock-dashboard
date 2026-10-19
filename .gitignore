@@ -1,7 +1,29 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
-.env
-.streamlit/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Tooling
 .pytest_cache/
-signal_results/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Secrets and local data
+.env
+.env.*
+!.env.example
+*.csv
+*.parquet
+*.log
+research_results/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
