@@ -1,0 +1,16 @@
+{
+  "name": "Sample: oversold in an uptrend",
+  "filters": [
+    {
+      "name": "rsi_max",
+      "value": 40
+    },
+    {
+      "name": "ratio_to_200ma_min",
+      "value": 1.0
+    }
+  ],
+  "regime": null,
+  "stats": {},
+  "description": "A short-term pullback (14-day RSI at or below 40) while price stays above its 200-day moving average."
+}

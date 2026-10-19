@@ -1,0 +1,16 @@
+{
+  "name": "Sample: Stage 2 on heavy volume",
+  "filters": [
+    {
+      "name": "weinstein_stage",
+      "value": "Stage 2"
+    },
+    {
+      "name": "volume_z_min",
+      "value": 1.5
+    }
+  ],
+  "regime": null,
+  "stats": {},
+  "description": "Weinstein Stage 2 (rising 50- and 150-day moving averages, close above the 50-day MA, a higher high) on a day with volume 1.5 standard deviations above its 20-day mean."
+}

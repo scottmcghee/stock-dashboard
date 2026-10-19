@@ -1,0 +1,16 @@
+{
+  "name": "Sample: RS leaders in an uptrend",
+  "filters": [
+    {
+      "name": "rs_rank_overall_min",
+      "value": 0.8
+    },
+    {
+      "name": "ratio_to_200ma_min",
+      "value": 1.0
+    }
+  ],
+  "regime": null,
+  "stats": {},
+  "description": "Stocks in the top fifth of the universe by relative strength that trade above their 200-day moving average."
+}
