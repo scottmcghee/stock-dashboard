@@ -39,6 +39,19 @@ INDICATOR_HISTORY_BARS = 420
 BARS_PER_TIMEFRAME = {"D": 1, "W": 5, "M": 21}
 
 
+def split_by_ticker(ohlcv_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Each ticker's rows of a multi-ticker frame, in their original order.
+
+    One pass over the frame, so per-ticker loops stay linear in its size.
+    """
+    if ohlcv_df.empty:
+        return {}
+    return {
+        str(ticker): group
+        for ticker, group in ohlcv_df.groupby("ticker", sort=False, observed=True)
+    }
+
+
 def compute_sma(close: pd.Series, period: int) -> pd.Series:
     """Simple moving average."""
     return close.rolling(window=period, min_periods=period).mean()
@@ -246,9 +259,10 @@ def compute_technical_zscore_table(
         ticker, rsi, momentum, ratio_to_ma, rsi_z, momentum_z, ratio_z, composite_z
     """
     rows = []
+    by_ticker = split_by_ticker(ohlcv_df)
     for ticker in tickers:
-        group = ohlcv_df[ohlcv_df["ticker"] == ticker]
-        if group.empty:
+        group = by_ticker.get(ticker)
+        if group is None:
             continue
         close = group.sort_values("date")["close"]
         rsi_val = get_latest_rsi(close, rsi_period)
@@ -390,9 +404,10 @@ def apply_ta_filters(
         return {t: {} for t in tickers}
 
     results: dict[str, dict[str, Any]] = {}
+    by_ticker = split_by_ticker(ohlcv_df)
     for ticker in tickers:
-        ticker_data = ohlcv_df[ohlcv_df["ticker"] == ticker]
-        if ticker_data.empty:
+        ticker_data = by_ticker.get(ticker)
+        if ticker_data is None:
             continue
         if timeframe != "D":
             ticker_data = resample_ohlcv(ticker_data.set_index("date"), timeframe).reset_index()

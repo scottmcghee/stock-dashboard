@@ -12,6 +12,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from stock_dashboard.logic.technical import split_by_ticker
+
 PatternMatch = dict[str, Any]
 
 
@@ -358,10 +360,11 @@ def scan_patterns(
     detectors = {k: v for k, v in PATTERN_DETECTORS.items() if k in patterns}
     results: dict[str, list[PatternMatch]] = {}
 
+    by_ticker = split_by_ticker(ohlcv_df)
     for ticker in tickers:
-        group = ohlcv_df[ohlcv_df["ticker"] == ticker].sort_values("date")
-        if group.empty:
+        if ticker not in by_ticker:
             continue
+        group = by_ticker[ticker].sort_values("date")
         detected = []
         for fn in detectors.values():
             result = fn(group)
