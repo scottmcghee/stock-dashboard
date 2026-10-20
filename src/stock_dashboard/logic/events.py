@@ -16,6 +16,7 @@ from stock_dashboard.logic.technical import (
     compute_ratio_to_ma_series,
     compute_rsi,
     compute_volume_z,
+    split_by_ticker,
 )
 
 EVENT_COLUMNS = [
@@ -85,8 +86,11 @@ def latest_event_flags_bulk(
     Tickers with fewer than :data:`EVENT_REQUIRED_BARS` bars are omitted.
     """
     out: dict[str, dict[str, bool]] = {}
+    by_ticker = split_by_ticker(ohlcv_df)
     for ticker in tickers:
-        g = ohlcv_df[ohlcv_df["ticker"] == ticker].sort_values("date")
+        if ticker not in by_ticker:
+            continue
+        g = by_ticker[ticker].sort_values("date")
         if len(g) < EVENT_REQUIRED_BARS:
             continue
         close = g["close"].reset_index(drop=True)

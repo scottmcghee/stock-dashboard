@@ -20,7 +20,25 @@ from stock_dashboard.logic.technical import (
     detect_gap,
     detect_macd_crossover,
     get_latest_rsi,
+    split_by_ticker,
 )
+
+
+class TestSplitByTicker:
+    def test_groups_keep_their_rows_in_order(self) -> None:
+        df = pd.DataFrame({"ticker": ["B", "A", "B", "A"], "close": [1.0, 2.0, 3.0, 4.0]})
+        groups = split_by_ticker(df)
+        assert list(groups) == ["B", "A"]
+        assert groups["B"]["close"].tolist() == [1.0, 3.0]
+        assert groups["A"].index.tolist() == [1, 3]
+
+    def test_unused_categories_are_left_out(self) -> None:
+        tickers = pd.Categorical(["A", "A"], categories=["A", "Z"])
+        groups = split_by_ticker(pd.DataFrame({"ticker": tickers, "close": [1.0, 2.0]}))
+        assert list(groups) == ["A"]
+
+    def test_empty_frame_without_columns(self) -> None:
+        assert split_by_ticker(pd.DataFrame()) == {}
 
 
 class TestComputeSma:
